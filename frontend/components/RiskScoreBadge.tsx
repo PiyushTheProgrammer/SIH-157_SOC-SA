@@ -15,9 +15,9 @@ export default function RiskScoreBadge({ score, size = 80 }: Props) {
   const strokeDashoffset = circumference * (1 - progress);
 
   const color =
-    score > 70 ? "var(--danger)" :
-    score > 40 ? "var(--warning)" :
-    "var(--success)";
+    score > 70 ? "#DC2626" :
+    score > 40 ? "#0B2A4A" :
+    "#16A34A";
 
   const label =
     score > 70 ? "CRITICAL" :

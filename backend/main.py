@@ -29,12 +29,17 @@ from pathlib import Path
 from typing import Any, Optional
 
 import aiofiles
+import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 # ── Local modules ──────────────────────────────
 from analytics_engine import AnalyticsOrchestrator, AnomalyReport
+from supervisory_assessment import build_assessment
+from priority_engine import generate_priority_queue
+from report_generator import build_report, render_report
 
 # ── LangChain (local only — no cloud imports) ──
 try:
@@ -71,6 +76,11 @@ logger = logging.getLogger("sat-sa")
 # Stored as a plain dict so it serialises cleanly to JSON.
 
 _report_cache: dict[str, Any] = {}
+_assessment_cache: dict[str, Any] = {}
+_priority_cache: list[dict[str, Any]] = []
+_priority_status: dict[str, str] = {}
+_alerts_cache: pd.DataFrame | None = None
+_inventory_cache: pd.DataFrame | None = None
 _cache_lock = asyncio.Lock()
 
 
@@ -85,12 +95,32 @@ def _run_engine(alerts_path: Path, inv_path: Path) -> dict[str, Any]:
 
 
 async def _refresh_cache(alerts_path: Path, inv_path: Path) -> None:
-    """Run the engine in a thread pool (non-blocking) and update the cache."""
-    global _report_cache
+    """Run the analytics, assessment and priority engines."""
+    global _report_cache, _assessment_cache, _priority_cache, _alerts_cache, _inventory_cache
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, _run_engine, alerts_path, inv_path)
+    assessment = await loop.run_in_executor(
+        None,
+        lambda: build_assessment(
+            pd.read_csv(alerts_path),
+            pd.read_csv(inv_path),
+            result,
+        ),
+    )
+    alerts_df = pd.read_csv(alerts_path)
+    inventory_df = pd.read_csv(inv_path)
+    priorities = await loop.run_in_executor(
+        None,
+        lambda: generate_priority_queue(alerts_df, inventory_df, assessment, result),
+    )
+    for item in priorities:
+        item["status"] = _priority_status.get(item["ticket_id"], item.get("status", "NEW"))
     async with _cache_lock:
         _report_cache = result
+        _assessment_cache = assessment
+        _priority_cache = priorities
+        _alerts_cache = alerts_df
+        _inventory_cache = inventory_df
     logger.info("Report cache refreshed — %d speed anomalies, %d blind spots",
                 result["summary"]["speed_anomalies_count"],
                 result["summary"]["blind_spots_count"])
@@ -122,7 +152,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="SAT-SA — Supervisory Analytics Tool for SOC Assessment",
-    description="Air-gapped anomaly detection API for government SOC auditors.",
+    description="Local prototype API for supervisory SOC assessment using synthetic operational evidence.",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -167,6 +197,17 @@ class AnomalyExplainResponse(BaseModel):
     model: Optional[str] = None
 
 
+class PriorityStatusUpdate(BaseModel):
+    status: str
+
+
+class ReportExportRequest(BaseModel):
+    scope: str = "assessment"
+    format: str = "json"
+    filters: dict[str, Any] = {}
+    ticket_id: Optional[str] = None
+
+
 # ══════════════════════════════════════════════════
 # LANGCHAIN PROMPT TEMPLATE
 # ══════════════════════════════════════════════════
@@ -175,7 +216,7 @@ _EXPLAIN_PROMPT = ChatPromptTemplate.from_messages([
     (
         "system",
         (
-            "You are a senior cybersecurity auditor reporting to NCIIPC supervisors. "
+            "You are a senior SOC assessment analyst supporting an internal supervisory review. "
             "Your tone is authoritative, concise, and professional. "
             "You write exactly 2 sentences — no more, no less. "
             "The first sentence states what the anomaly is and why it is operationally impossible or suspicious. "
@@ -312,6 +353,130 @@ async def dashboard_summary():
             ),
         )
     return _report_cache
+
+
+def _require_assessment() -> dict[str, Any]:
+    if not _assessment_cache:
+        raise HTTPException(
+            status_code=503,
+            detail="No assessment data loaded. Upload a CSV or restart with local data.",
+        )
+    return _assessment_cache
+
+
+@app.get("/api/assessment", summary="Supervisory assessment dimensions and lifecycle")
+async def assessment_summary():
+    return _require_assessment()
+
+
+@app.get("/api/findings", summary="Supervisory findings work queue")
+async def assessment_findings():
+    return {"findings": _require_assessment()["findings"]}
+
+
+@app.get("/api/evidence", summary="Ticket evidence review records")
+async def evidence_records():
+    return {"evidence": _require_assessment()["evidence"]}
+
+
+@app.get("/api/evidence/{ticket_id}", summary="Evidence detail for one ticket")
+async def evidence_detail(ticket_id: str):
+    for record in _require_assessment()["evidence"]:
+        if record["ticket_id"] == ticket_id:
+            return record
+    raise HTTPException(status_code=404, detail=f"Ticket {ticket_id} was not found.")
+
+
+@app.get("/api/assets", summary="Asset monitoring assessment")
+async def asset_monitoring():
+    return {"assets": _require_assessment()["assets"]}
+
+
+@app.get("/api/data-quality", summary="Dataset quality and processing metadata")
+async def data_quality():
+    assessment = _require_assessment()
+    alerts = _alerts_cache
+    if alerts is None:
+        raise HTTPException(status_code=503, detail="Dataset cache is not ready.")
+    timestamps = pd.to_datetime(alerts.get("timestamp"), errors="coerce")
+    return {
+        "dataset": {
+            "file_name": ALERTS_CSV.name,
+            "records": len(alerts),
+            "date_range": {"start": timestamps.min().isoformat() if not timestamps.isna().all() else None, "end": timestamps.max().isoformat() if not timestamps.isna().all() else None},
+            "assets": len(assessment["assets"]),
+            "analysts": int(alerts["assigned_analyst"].nunique()) if "assigned_analyst" in alerts else 0,
+            "last_processed": timestamps.max().isoformat() if not timestamps.isna().all() else None,
+        },
+        "data_quality": {
+            "missing_values": int(alerts.isna().sum().sum()),
+            "duplicate_ids": int(alerts["ticket_id"].duplicated().sum()) if "ticket_id" in alerts else 0,
+            "invalid_timestamps": int(timestamps.isna().sum()),
+            "missing_severity": int(alerts["alert_severity"].isna().sum()) if "alert_severity" in alerts else len(alerts),
+            "missing_escalation_field": int(alerts["escalated"].isna().sum()) if "escalated" in alerts else len(alerts),
+        },
+        "processing": {"local_processing": "Operational", "analytics_engine": "Operational", "last_analysis": timestamps.max().isoformat() if not timestamps.isna().all() else None},
+    }
+
+
+def _require_priorities() -> list[dict[str, Any]]:
+    if not _priority_cache:
+        raise HTTPException(status_code=503, detail="No priority data loaded. Upload a CSV or restart with local data.")
+    return _priority_cache
+
+
+@app.get("/api/priorities", summary="AI-assisted case review priority queue")
+async def priorities(severity: Optional[str] = None, status: Optional[str] = None, analyst: Optional[str] = None, asset: Optional[str] = None):
+    queue = _require_priorities()
+    return {"recommendation_only": True, "decision_authority": "analyst", "priorities": [item for item in queue if (not severity or item["severity"] == severity.upper()) and (not status or item["status"] == status.upper()) and (not analyst or item["analyst"] == analyst) and (not asset or item["asset"] == asset)]}
+
+
+@app.get("/api/priorities/{ticket_id}", summary="Priority detail for one ticket")
+async def priority_detail(ticket_id: str):
+    for item in _require_priorities():
+        if item["ticket_id"] == ticket_id:
+            return {"recommendation_only": True, **item}
+    raise HTTPException(status_code=404, detail=f"Ticket {ticket_id} was not found.")
+
+
+@app.patch("/api/priorities/{ticket_id}/status", summary="Update analyst review status")
+async def update_priority_status(ticket_id: str, update: PriorityStatusUpdate):
+    allowed = {"NEW", "UNDER_REVIEW", "ASSIGNED", "INVESTIGATING", "ESCALATED", "RESOLVED", "CLOSED"}
+    status = update.status.upper()
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail=f"Status must be one of: {', '.join(sorted(allowed))}")
+    for item in _require_priorities():
+        if item["ticket_id"] == ticket_id:
+            _priority_status[ticket_id] = status
+            item["status"] = status
+            return item
+    raise HTTPException(status_code=404, detail=f"Ticket {ticket_id} was not found.")
+
+
+@app.post("/api/reports/export", summary="Generate a local SAT-SA report")
+async def export_report(request: ReportExportRequest):
+    assessment = _require_assessment()
+    if not _report_cache:
+        raise HTTPException(status_code=503, detail="No analytics data loaded.")
+    quality = await data_quality()
+    ticket = None
+    if request.ticket_id:
+        ticket = next((item for item in assessment["evidence"] if item["ticket_id"] == request.ticket_id), None)
+        if ticket:
+            ticket["priority"] = next((item for item in _priority_cache if item["ticket_id"] == request.ticket_id), None)
+            ticket["findings"] = [finding for finding in assessment["findings"] if finding.get("entity") == request.ticket_id]
+    filters = request.filters or {}
+    filtered_priorities = [item for item in _priority_cache if all(not filters.get(key) or str(item.get(key, "")).upper() == str(value).upper() for key, value in filters.items() if key in {"severity", "status", "analyst", "asset"})]
+    filtered_assessment = dict(assessment)
+    if filters.get("status"):
+        filtered_assessment["findings"] = [finding for finding in assessment["findings"] if str(finding.get("status", "")).upper() == str(filters["status"]).upper()]
+    try:
+        report = build_report(request.scope, filtered_assessment, _report_cache, filtered_priorities, quality, ticket)
+        content, media_type = render_report(report, request.format)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    filename = f"sat-sa-{request.scope}.{request.format}"
+    return Response(content=content, media_type=media_type, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.post(

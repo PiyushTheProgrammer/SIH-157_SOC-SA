@@ -61,7 +61,7 @@ function EscalatedBadge({ escalated }: { escalated: boolean }) {
       style={{
         fontSize: 11,
         fontWeight: 600,
-        color: escalated ? "var(--success)" : "var(--text-muted)",
+        color: escalated ? "#16A34A" : "#000000",
         display: "flex",
         alignItems: "center",
         gap: 4,
@@ -110,14 +110,14 @@ function SpeedAnomalyTab({
         <tbody>
           {data.slice(0, 200).map((row) => (
             <tr key={row.ticket_id}>
-              <td style={{ fontFamily: "monospace", fontSize: 12, color: "var(--accent)" }}>
+              <td style={{ fontFamily: "monospace", fontSize: 12, color: "#0B2A4A" }}>
                 {row.ticket_id}
               </td>
               <td><SeverityChip severity={row.severity} /></td>
               <td>{row.alert_type}</td>
               <td>{row.analyst}</td>
               <td>
-                <span style={{ color: "var(--danger)", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+                <span style={{ color: "#DC2626", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
                   {row.time_to_close}s
                 </span>
               </td>
@@ -177,10 +177,10 @@ function RepetitiveNotesTab({
               <td>
                 <span
                   style={{
-                    background: "var(--warning-dim)",
-                    color: "var(--warning)",
-                    border: "1px solid rgba(245,158,11,0.25)",
-                    borderRadius: 999,
+                    background: "#FFFFFF",
+                    color: "#0B2A4A",
+                    border: "1px solid #0B2A4A",
+                    borderRadius: 4,
                     padding: "2px 10px",
                     fontSize: 12,
                     fontWeight: 700,
@@ -285,7 +285,7 @@ function BlindSpotTab({
                     0 (SILENT)
                   </span>
                 ) : (
-                  <span style={{ color: "var(--warning)", fontWeight: 600 }}>{row.actual_alerts}</span>
+                  <span style={{ color: "#0B2A4A", fontWeight: 600 }}>{row.actual_alerts}</span>
                 )}
               </td>
               <td style={{ color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>

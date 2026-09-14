@@ -1,467 +1,82 @@
-"use client";
+﻿"use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import axios from "axios";
-import MetricsBar from "@/components/MetricsBar";
-import SpeedScatterPlot from "@/components/SpeedScatterPlot";
-import BlindSpotBarChart from "@/components/BlindSpotBarChart";
-import AnomalyTable from "@/components/AnomalyTable";
-import RiskScoreBadge from "@/components/RiskScoreBadge";
+import { useEffect, useState } from "react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+type RecordValue = Record<string, any>;
+const nav = [["/", "Overview"], ["/assessment", "Assessment"], ["/findings", "Findings"], ["/evidence", "Evidence Review"], ["/assets", "Asset Monitoring"], ["/data", "Data & System"], ["/reports", "Reports"], ["/prioritizer", "AI Prioritizer"]];
+let overviewAnalyticsData: { dashboard: RecordValue; assessment: RecordValue } | null = null;
 
-// ── Types ────────────────────────────────────────────────────
+async function request(path: string, options?: RequestInit) {
+  const response = await fetch(`${API}${path}`, options);
+  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.detail ?? `Request failed (${response.status})`); }
+  return response;
+}
+async function json(path: string) { return (await request(path)).json(); }
 
-interface Summary {
-  total_alerts: number;
-  total_flagged_anomalies: number;
-  speed_anomalies_count: number;
-  repetitive_notes_clusters: number;
-  repetitive_notes_tickets: number;
-  blind_spots_count: number;
-  overall_risk_score: number;
-  entity_risk: EntityRisk[];
+function Shell({ children }: { children: React.ReactNode }) {
+  const [path, setPath] = useState("/");
+  useEffect(() => setPath(window.location.pathname), []);
+  return <div className="shell"><aside className="sidebar"><div className="brand"><strong>SAT-SA</strong><span>Supervisory Analytics for SOC Assessment</span></div><nav className="nav" aria-label="Primary navigation">{nav.map(([href, label]) => <a className={path === href ? "active" : ""} href={href} key={href}>{label}</a>)}</nav><div className="sidebar-meta"><span>Dataset</span><div>SOC synthetic demonstration dataset</div><span>Processing</span><div>Local</div><span>Status</span><div className="operational"><b />Operational</div></div></aside><section className="main"><header className="topbar"><h1>SAT-SA</h1><div className="topbar-meta"><span>Assessment Period<br /><b>01 Aug 2026 - 30 Aug 2026</b></span><span className="system-status"><b />System Operational</span></div></header>{children}<footer className="footer"><span>SAT-SA Prototype</span><span>Evidence-based supervisory assessment using synthetic local data.</span></footer></section></div>;
+}
+function Page({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) { const statisticalSection = title === "Supervisory Assessment Overview" && overviewAnalyticsData ? <AnalyticsStatistics dashboard={overviewAnalyticsData.dashboard} assessment={overviewAnalyticsData.assessment} /> : null; return <main className="content"><h1 className="page-title">{title}</h1><p className="subtitle">{subtitle}</p>{statisticalSection}{children}</main>; }
+function LoadState({ error }: { error: string | null }) { return error ? <div className="error">{error}</div> : <div className="panel">Loading local assessment data...</div>; }
+function Tag({ value }: { value: string }) { const tone = ["Adequate", "Observed", "LOW", "RESOLVED", "CLOSED"].includes(value) ? "green" : ["Attention", "Missing", "CRITICAL", "URGENT"].includes(value) ? "red" : "amber"; return <span className={`tag ${tone}`}>{value}</span>; }
+
+function SeverityDonut({ counts }: { counts: Record<string, number> }) {
+  const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
+  const radius = 42;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+  const colors: Record<string, string> = { CRITICAL: "#DC2626", HIGH: "#0B2A4A", MEDIUM: "#000000", LOW: "#16A34A" };
+  return <div className="donut-wrap"><div className="donut-chart"><svg viewBox="0 0 112 112" role="img" aria-label={`Findings by severity, ${total} total`}><circle cx="56" cy="56" r={radius} fill="none" stroke="#000000" strokeWidth="14" />{["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(severity => { const length = total ? (counts[severity] / total) * circumference : 0; const segment = <circle key={severity} cx="56" cy="56" r={radius} fill="none" stroke={colors[severity]} strokeWidth="14" strokeDasharray={`${length} ${circumference - length}`} strokeDashoffset={-offset} transform="rotate(-90 56 56)" />; offset += length; return segment; })}<text x="56" y="53" textAnchor="middle" fill="#000000" fontSize="10">TOTAL</text><text x="56" y="67" textAnchor="middle" fill="#000000" fontSize="16" fontWeight="700">{total.toLocaleString()}</text></svg></div><div className="severity-legend">{["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(severity => <div key={severity}><span className={`legend-mark ${severity.toLowerCase()}`} /><span>{severity}</span><strong>{counts[severity].toLocaleString()}</strong><small>{total ? `${Math.round((counts[severity] / total) * 100)}%` : "0%"}</small></div>)}</div></div>;
 }
 
-interface EntityRisk {
-  entity: string;
-  risk_score: number;
-  speed_anomalies?: number;
-  repetitive_notes?: number;
-  blind_spot?: boolean;
+function FindingsTrend({ anomalies }: { anomalies: RecordValue[] }) {
+  const grouped = anomalies.reduce<Record<string, number>>((result, item) => { const date = String(item.timestamp || "").slice(0, 10); if (date) result[date] = (result[date] || 0) + 1; return result; }, {});
+  const points = Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).slice(-10);
+  const max = Math.max(...points.map(([, count]) => count), 1);
+  const polyline = points.map(([, count], index) => `${10 + (index * 180) / Math.max(points.length - 1, 1)},${92 - (count / max) * 70}`).join(" ");
+  return <div className="trend-chart"><svg viewBox="0 0 200 112" role="img" aria-label="Findings trend based on closure-speed signals"><line x1="10" y1="92" x2="190" y2="92" stroke="#000000" strokeWidth="1" /><line x1="10" y1="22" x2="10" y2="92" stroke="#000000" strokeWidth="1" /><polyline points={polyline} fill="none" stroke="#0B2A4A" strokeWidth="3" />{points.map(([date, count], index) => <circle key={date} cx={10 + (index * 180) / Math.max(points.length - 1, 1)} cy={92 - (count / max) * 70} r="3" fill="#0B2A4A"><title>{date}: {count}</title></circle>)}</svg><div className="trend-labels">{points.map(([date, count]) => <span key={date}>{date.slice(5)}<b>{count}</b></span>)}</div></div>;
 }
 
-interface DashboardData {
-  summary: Summary;
-  speed_anomalies: any[];
-  repetitive_notes: any[];
-  blind_spots: any[];
+function AnalyticsStatistics({ dashboard, assessment }: { dashboard: RecordValue; assessment: RecordValue }) {
+  const counts = ["CRITICAL", "HIGH", "MEDIUM", "LOW"].reduce<Record<string, number>>((result, severity) => { result[severity] = assessment.findings.filter((finding: RecordValue) => finding.severity === severity).length; return result; }, {});
+  const signals = [["Speed anomalies", dashboard.summary.speed_anomalies_count, "red"], ["Repetitive-note clusters", dashboard.summary.repetitive_notes_clusters, "blue"], ["Telemetry blind spots", dashboard.summary.blind_spots_count, "black"]];
+  const assets = [...assessment.assets].sort((a: RecordValue, b: RecordValue) => Math.abs(b.deviation) - Math.abs(a.deviation)).slice(0, 5);
+  return <><section className="panel statistical-summary"><div className="section-heading"><h2>Statistical Assessment</h2><span className="muted-note">Calculated from supplied operational evidence</span></div><div className="stat-grid">{[["Analytics Signals", dashboard.summary.total_flagged_anomalies], ["Speed Anomalies", dashboard.summary.speed_anomalies_count], ["Repetitive Resolution Patterns", dashboard.summary.repetitive_notes_clusters], ["Telemetry Blind Spots", dashboard.summary.blind_spots_count], ["Records Assessed", assessment.lifecycle.records_assessed], ["Assets Monitored", assessment.assets.length]].map(([label, value]) => <div className="stat-block" key={label}><strong>{Number(value).toLocaleString()}</strong><span>{label}</span></div>)}</div></section><div className="analytics-grid"><section className="panel"><h2>Findings by Severity</h2><SeverityDonut counts={counts} /></section><section className="panel"><h2>Findings Trend</h2><p className="chart-note">Closure-speed signals by observed ticket date.</p><FindingsTrend anomalies={dashboard.speed_anomalies} /></section></div><div className="analytics-grid"><section className="panel"><h2>Analytics Signal Breakdown</h2><div className="signal-bars">{signals.map(([label, value, tone]) => <div className="signal-bar" key={label}><div><span>{label}</span><strong>{Number(value).toLocaleString()}</strong></div><i className={tone} style={{ width: `${Math.min((Number(value) / Math.max(dashboard.summary.total_flagged_anomalies, 1)) * 100, 100)}%` }} /></div>)}</div></section><section className="panel"><h2>Top Assets by Deviation</h2><p className="chart-note">Largest observed departures from peer volume.</p><table className="mini-table"><thead><tr><th>Asset</th><th>Deviation</th><th>Status</th></tr></thead><tbody>{assets.map((asset: RecordValue) => <tr key={asset.asset}><td>{asset.asset}</td><td>{asset.deviation > 0 ? "+" : ""}{asset.deviation}</td><td><Tag value={asset.monitoring_status === "Observed" ? "Observed" : "Attention"} /></td></tr>)}</tbody></table></section></div></>;
 }
 
-// ── Loading skeleton ─────────────────────────────────────────
-
-function Skeleton({ height = 200 }: { height?: number }) {
-  return <div className="skeleton" style={{ height, borderRadius: 12, width: "100%" }} />;
+function Overview() {
+  const [data, setData] = useState<RecordValue | null>(null); const [error, setError] = useState<string | null>(null);
+  useEffect(() => { Promise.all([json("/api/assessment"), json("/api/dashboard/summary"), json("/api/priorities")]).then(([assessment, dashboard, priority]) => setData({ assessment, dashboard, priority })).catch(e => setError(e.message)); }, []);
+  if (!data) return <Page title="Supervisory Assessment Overview" subtitle="Operational effectiveness based on available alert, process, and evidence records."><LoadState error={error} /></Page>;
+  const { assessment, dashboard, priority } = data;
+  overviewAnalyticsData = { assessment, dashboard };
+  return <Page title="Supervisory Assessment Overview" subtitle="Operational effectiveness based on available alert, process, and evidence records."><div className="grid grid-5">{[["Records assessed", assessment.lifecycle.records_assessed.toLocaleString()], ["Findings requiring attention", assessment.findings.length], ["Analytics signals", dashboard.summary.total_flagged_anomalies], ["Assets monitored", assessment.assets.length], ["Dataset / system status", "Operational"]].map(([label, value]) => <div className="panel" key={label}><div className="meta-label">{label}</div><div className="meta-value">{value}</div></div>)}</div><div className="grid grid-2" style={{ marginTop: 16 }}><section className="panel"><h2>Supervisory Assessment Summary</h2><div style={{ fontSize: 30, margin: "12px 0" }}>{assessment.overall_score} <small style={{ color: "var(--black)", fontSize: 14 }}>/ 100</small></div><div className="bar"><span style={{ width: `${assessment.overall_score}%` }} /></div><p className="subtitle" style={{ margin: "10px 0 0" }}>Weighted result across seven dimensions.</p></section><section className="panel"><h2>Findings by Severity</h2><div className="severity-list">{["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(severity => <div key={severity}><Tag value={severity} /><strong>{assessment.findings.filter((f: RecordValue) => f.severity === severity).length}</strong></div>)}</div></section></div><section className="panel" style={{ marginTop: 16 }}><div className="section-heading"><h2>AI-Assisted Review Priority</h2><span className="muted-note">Recommendation only. Analyst retains decision authority.</span></div><div className="table-wrap"><table className="data-table"><thead><tr><th>#</th><th>Case</th><th>Priority</th><th>Severity</th><th>Asset</th><th>Analyst</th><th>Reasons</th></tr></thead><tbody>{priority.priorities.slice(0, 8).map((item: RecordValue) => <tr key={item.ticket_id}><td>{item.rank}</td><td><a href={`/evidence?ticket=${item.ticket_id}`}>{item.ticket_id}</a></td><td><strong>{item.priority_score}</strong> <Tag value={item.priority} /></td><td><Tag value={item.severity} /></td><td>{item.asset}</td><td>{item.analyst}</td><td>{item.reasons.join("; ") || "Review recommended from available evidence."}</td></tr>)}</tbody></table></div></section><section className="panel" style={{ marginTop: 16 }}><h2>Assessment Dimensions</h2>{assessment.dimensions.map((d: RecordValue) => <div className="score-row" key={d.dimension}><strong>{d.dimension}</strong><span className="score-number">{d.score}</span><div className="bar"><span style={{ width: `${d.score}%` }} /></div><Tag value={d.status} /><small>{d.finding_count} findings</small></div>)}</section></Page>;
 }
 
-// ── Upload component ─────────────────────────────────────────
+function Assessment() { const [data, setData] = useState<RecordValue | null>(null); const [error, setError] = useState<string | null>(null); useEffect(() => { json("/api/assessment").then(setData).catch(e => setError(e.message)); }, []); return <Page title="Assessment" subtitle="Transparent dimension scores and assessment logic derived from supplied evidence.">{!data ? <LoadState error={error} /> : <div className="grid grid-2">{data.dimensions.map((d: RecordValue) => <section className="panel" key={d.dimension}><div className="section-heading"><h2>{d.dimension}</h2><Tag value={d.status} /></div><div style={{ fontSize: 28 }}>{d.score} <small className="muted-note">/ 100 | {d.weight * 100}% weight</small></div><div className="bar" style={{ margin: "10px 0 16px" }}><span style={{ width: `${d.score}%` }} /></div><p className="subtitle">Records assessed: {d.records_assessed} | Missing evidence: {d.records_missing_evidence}</p><p className="logic">{d.assessment_logic}</p></section>)}</div>}</Page>; }
 
-function UploadZone({ onUploaded }: { onUploaded: () => void }) {
-  const [dragging, setDragging] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+function Findings() { const [data, setData] = useState<RecordValue | null>(null); const [error, setError] = useState<string | null>(null); useEffect(() => { json("/api/findings").then(setData).catch(e => setError(e.message)); }, []); return <Page title="Findings" subtitle="Supervisory work queue. Automated findings are review signals, not final conclusions.">{!data ? <LoadState error={error} /> : <section className="panel"><div className="filters"><select aria-label="Severity"><option>All severities</option></select><select aria-label="Status"><option>All statuses</option><option>Open</option><option>Under Review</option></select><select aria-label="Finding type"><option>All finding types</option></select></div><div className="table-wrap"><table className="data-table"><thead><tr>{["Priority","Severity","Case ID","Finding","Asset","Analyst","Status"].map(x => <th key={x}>{x}</th>)}</tr></thead><tbody>{data.findings.map((f: RecordValue) => <tr key={f.finding_id}><td><a href={`/prioritizer?ticket=${f.entity}`}>Review</a></td><td><Tag value={f.severity} /></td><td>{f.entity}</td><td>{f.observation}</td><td>{f.asset}</td><td>{f.analyst || "Not available"}</td><td><Tag value={f.status} /></td></tr>)}</tbody></table></div></section>}</Page>; }
 
-  const handleFile = async (file: File) => {
-    if (!file.name.endsWith(".csv")) {
-      setError("Only CSV files are accepted.");
-      return;
-    }
-    setUploading(true);
-    setMessage(null);
-    setError(null);
+function Prioritizer() { const [data, setData] = useState<RecordValue | null>(null); const [error, setError] = useState<string | null>(null); const [status, setStatus] = useState<RecordValue>({}); useEffect(() => { json("/api/priorities").then(setData).catch(e => setError(e.message)); }, []); async function update(ticket: string, next: string) { await request(`/api/priorities/${ticket}/status`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: next }) }); setStatus({ ...status, [ticket]: next }); } if (!data) return <Page title="AI-Assisted Prioritization" subtitle="Decision-support recommendation. Final review remains with the analyst."><LoadState error={error} /></Page>; const queue = data.priorities; return <Page title="AI-Assisted Prioritization" subtitle="Transparent review ordering based on existing analytics and supervisory evidence. Decision-support recommendation only."><div className="grid grid-4">{[["Total cases", queue.length], ["Urgent", queue.filter((x: RecordValue) => x.priority === "URGENT").length], ["High", queue.filter((x: RecordValue) => x.priority === "HIGH").length], ["Medium / Low", queue.filter((x: RecordValue) => ["MEDIUM", "LOW"].includes(x.priority)).length]].map(([label, value]) => <div className="panel" key={label}><div className="meta-label">{label}</div><div className="meta-value">{value}</div></div>)}</div><section className="panel" style={{ marginTop: 16 }}><div className="table-wrap"><table className="data-table"><thead><tr><th>Rank</th><th>Case</th><th>Score</th><th>Severity</th><th>Asset</th><th>Analyst</th><th>Status</th><th>Reasons</th></tr></thead><tbody>{queue.map((item: RecordValue) => <tr key={item.ticket_id}><td>{item.rank}</td><td>{item.ticket_id}</td><td><strong>{item.priority_score}</strong> <Tag value={item.priority} /></td><td><Tag value={item.severity} /></td><td>{item.asset}</td><td>{item.analyst}</td><td><select value={status[item.ticket_id] ?? item.status} onChange={e => update(item.ticket_id, e.target.value)} aria-label={`Status for ${item.ticket_id}`}><option>NEW</option><option>UNDER_REVIEW</option><option>ASSIGNED</option><option>INVESTIGATING</option><option>ESCALATED</option><option>RESOLVED</option><option>CLOSED</option></select></td><td>{item.reasons.join("; ") || "Review recommended from available evidence."}</td></tr>)}</tbody></table></div></section></Page>; }
 
-    const form = new FormData();
-    form.append("file", file);
+function Reports() { const [scope, setScope] = useState("assessment"); const [format, setFormat] = useState("pdf"); const [ticket, setTicket] = useState(""); const [error, setError] = useState<string | null>(null); const [download, setDownload] = useState<string | null>(null); const [generating, setGenerating] = useState(false); async function generate() { try { setError(null); setDownload(null); setGenerating(true); const response = await request("/api/reports/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scope, format, ticket_id: scope === "single_case" ? ticket : null }) }); const blob = await response.blob(); setDownload(URL.createObjectURL(blob)); } catch (e: any) { setError(e.message); } finally { setGenerating(false); } } return <Page title="Reports" subtitle="Generate local SAT-SA reports from available assessment and analytics records."><section className="panel report-builder"><label>Scope<select value={scope} onChange={e => setScope(e.target.value)}><option value="assessment">Complete Assessment</option><option value="findings">Findings</option><option value="analytics">Analytics Signals</option><option value="assets">Asset Monitoring</option><option value="single_case">Single Case</option><option value="custom">Custom Report</option></select></label>{scope === "single_case" && <label>Ticket ID<input value={ticket} onChange={e => setTicket(e.target.value)} placeholder="TKT-000001" /></label>}<label>Format<select value={format} onChange={e => setFormat(e.target.value)}><option value="pdf">PDF</option><option value="json">JSON</option><option value="csv">CSV</option><option value="txt">TXT</option></select></label><button className="btn-primary" onClick={generate} disabled={generating || (scope === "single_case" && !ticket)}>{generating ? "Generating..." : "Generate Report"}</button>{download && <a className="download" href={download} download={`sat-sa-${scope}.${format}`}>Download generated report</a>}{error && <div className="error">{error}</div>}</section><div className="notice" style={{ marginTop: 16 }}>Reports are generated locally from synthetic demonstration data. No official classification, affiliation, or external integration is implied.</div></Page>; }
 
-    try {
-      const res = await axios.post(`${API_BASE}/api/upload`, form, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      setMessage(res.data.message);
-      // Wait 3s for engine to process then refresh
-      setTimeout(onUploaded, 3000);
-    } catch (err: any) {
-      setError(err?.response?.data?.detail ?? err.message);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  return (
-    <div
-      className={`upload-zone ${dragging ? "drag-over" : ""}`}
-      onDragEnter={(e) => { e.preventDefault(); setDragging(true); }}
-      onDragLeave={() => setDragging(false)}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => {
-        e.preventDefault();
-        setDragging(false);
-        const file = e.dataTransfer.files[0];
-        if (file) handleFile(file);
-      }}
-      onClick={() => inputRef.current?.click()}
-      id="upload-zone"
-    >
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".csv"
-        style={{ display: "none" }}
-        id="csv-file-input"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) handleFile(file);
-        }}
-      />
-
-      <svg
-        width="32"
-        height="32"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="var(--accent)"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        style={{ marginBottom: 12, opacity: 0.7 }}
-      >
-        <polyline points="16 16 12 12 8 16" />
-        <line x1="12" y1="12" x2="12" y2="21" />
-        <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
-      </svg>
-
-      {uploading ? (
-        <div style={{ color: "var(--accent)", fontSize: 13 }}>Uploading and analysing&hellip;</div>
-      ) : (
-        <>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>
-            Drop a SOC Alerts CSV here
-          </div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            or click to browse — replaces current dataset
-          </div>
-        </>
-      )}
-
-      {message && (
-        <div
-          style={{
-            marginTop: 12,
-            padding: "8px 16px",
-            background: "var(--success-dim)",
-            border: "1px solid rgba(16,185,129,0.25)",
-            borderRadius: 6,
-            fontSize: 12,
-            color: "var(--success)",
-          }}
-        >
-          {message}
-        </div>
-      )}
-      {error && (
-        <div
-          style={{
-            marginTop: 12,
-            padding: "8px 16px",
-            background: "var(--danger-dim)",
-            border: "1px solid rgba(239,68,68,0.25)",
-            borderRadius: 6,
-            fontSize: 12,
-            color: "var(--danger)",
-          }}
-        >
-          {error}
-        </div>
-      )}
-    </div>
-  );
+function PriorityWorkspace() {
+  const [data, setData] = useState<RecordValue | null>(null); const [error, setError] = useState<string | null>(null); const [query, setQuery] = useState(""); const [severity, setSeverity] = useState("ALL"); const [classification, setClassification] = useState("ALL"); const [statusFilter, setStatusFilter] = useState("ALL"); const [sort, setSort] = useState("score"); const [selected, setSelected] = useState<RecordValue | null>(null);
+  useEffect(() => { json("/api/priorities").then(setData).catch(e => setError(e.message)); }, []);
+  async function updateStatus(ticketId: string, nextStatus: string) { try { await request(`/api/priorities/${ticketId}/status`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: nextStatus }) }); setData(current => current ? { ...current, priorities: current.priorities.map((item: RecordValue) => item.ticket_id === ticketId ? { ...item, status: nextStatus } : item) } : current); setSelected(current => current ? { ...current, status: nextStatus } : current); } catch (statusError: any) { setError(statusError.message); } }
+  if (!data) return <Page title="AI-Assisted Prioritization" subtitle="Decision-support recommendation. Final review remains with the analyst."><LoadState error={error} /></Page>;
+  const visible = [...data.priorities].filter((item: RecordValue) => (severity === "ALL" || item.severity === severity) && (classification === "ALL" || item.priority === classification) && (statusFilter === "ALL" || item.status === statusFilter) && [item.ticket_id, item.asset, item.analyst, item.alert_type].join(" ").toLowerCase().includes(query.toLowerCase())).sort((a: RecordValue, b: RecordValue) => sort === "rank" ? a.rank - b.rank : sort === "timestamp" ? String(b.timestamp).localeCompare(String(a.timestamp)) : b.priority_score - a.priority_score);
+  return <Page title="AI-Assisted Prioritization" subtitle="Transparent review ordering based on existing analytics and supervisory evidence. Recommendation only. Analyst retains decision authority."><div className="filters"><input aria-label="Search cases" placeholder="Search case, asset, analyst..." value={query} onChange={e => setQuery(e.target.value)} /><select aria-label="Severity filter" value={severity} onChange={e => setSeverity(e.target.value)}><option value="ALL">All severities</option>{["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(value => <option key={value}>{value}</option>)}</select><select aria-label="Classification filter" value={classification} onChange={e => setClassification(e.target.value)}><option value="ALL">All classifications</option>{["URGENT", "HIGH", "MEDIUM", "LOW"].map(value => <option key={value}>{value}</option>)}</select><select aria-label="Status filter" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}><option value="ALL">All statuses</option>{["NEW", "UNDER_REVIEW", "ASSIGNED", "INVESTIGATING", "ESCALATED", "RESOLVED", "CLOSED"].map(value => <option key={value}>{value}</option>)}</select><select aria-label="Sort priority queue" value={sort} onChange={e => setSort(e.target.value)}><option value="score">Sort by score</option><option value="rank">Sort by rank</option><option value="timestamp">Sort by newest</option></select></div><section className="panel"><div className="table-wrap"><table className="data-table"><thead><tr><th>Rank</th><th>Case</th><th>Score</th><th>Severity</th><th>Asset</th><th>Analyst</th><th>Timestamp</th><th>Status</th><th>Reasons</th></tr></thead><tbody>{visible.map((item: RecordValue) => <tr className="link-row" onClick={() => setSelected(item)} key={item.ticket_id}><td>{item.rank}</td><td>{item.ticket_id}</td><td><strong>{item.priority_score}</strong> <Tag value={item.priority_classification ?? item.priority} /></td><td><Tag value={item.severity} /></td><td>{item.asset}</td><td>{item.analyst}</td><td>{item.timestamp ? new Date(item.timestamp).toLocaleString() : "Not available"}</td><td>{item.status}</td><td>{item.reasons.join("; ") || "Review recommended from available evidence."}</td></tr>)}</tbody></table></div></section>{selected && <aside className="detail"><div className="detail-header"><h2>{selected.ticket_id}</h2><button className="close" aria-label="Close priority detail" onClick={() => setSelected(null)}>x</button></div><p className="subtitle">Priority {selected.priority_score} | {selected.severity} | {selected.asset}</p><label className="detail-status">Review status<select aria-label="Update priority status" value={selected.status} onChange={e => updateStatus(selected.ticket_id, e.target.value)}>{["NEW", "UNDER_REVIEW", "ASSIGNED", "INVESTIGATING", "ESCALATED", "RESOLVED", "CLOSED"].map(value => <option key={value}>{value}</option>)}</select></label><h3>Review reasons</h3><ul>{selected.reasons.map((reason: string) => <li key={reason}>{reason}</li>)}</ul><p className="logic">Recommendation only. Available evidence indicates increased supervisory attention may be useful. Final review remains with the analyst.</p></aside>}</Page>;
 }
 
-// ── Entity Risk Table ─────────────────────────────────────────
+function SimpleDataPage({ endpoint, title, subtitle, columns }: { endpoint: string; title: string; subtitle: string; columns: string[] }) { const [data, setData] = useState<RecordValue | null>(null); const [error, setError] = useState<string | null>(null); useEffect(() => { json(endpoint).then(setData).catch(e => setError(e.message)); }, [endpoint]); const rows = data?.evidence ?? data?.assets ?? []; return <Page title={title} subtitle={subtitle}>{!data ? <LoadState error={error} /> : <section className="panel"><div className="table-wrap"><table className="data-table"><thead><tr>{columns.map(c => <th key={c}>{c.replaceAll("_", " ")}</th>)}</tr></thead><tbody>{rows.slice(0, 200).map((row: RecordValue, index: number) => <tr key={row.ticket_id ?? row.asset ?? index}>{columns.map(column => <td key={column}>{String(row[column] ?? "")}</td>)}</tr>)}</tbody></table></div></section>}</Page>; }
+function DataSystem() { const [data, setData] = useState<RecordValue | null>(null); const [error, setError] = useState<string | null>(null); useEffect(() => { json("/api/data-quality").then(setData).catch(e => setError(e.message)); }, []); return <Page title="Data & System" subtitle="Dataset provenance, quality checks, and local processing status.">{!data ? <LoadState error={error} /> : <div className="grid grid-2">{["dataset", "data_quality", "processing"].map(section => <section className="panel" key={section}><h2>{section.replaceAll("_", " ")}</h2>{Object.entries(data[section]).map(([key, value]) => <div className="score-row" key={key}><span>{key.replaceAll("_", " ")}</span><strong>{String(value)}</strong></div>)}</section>)}</div>}</Page>; }
+function Evidence() { return <SimpleDataPage endpoint="/api/evidence" title="Evidence Review" subtitle="Lifecycle evidence review. Missing means not observed in the supplied records." columns={["ticket_id", "severity", "alert_type", "analyst", "asset", "assessment"]} />; }
+function Assets() { return <SimpleDataPage endpoint="/api/assets" title="Asset Monitoring" subtitle="Peer comparison of observed alert volume and telemetry coverage." columns={["asset", "criticality", "type", "department", "alert_volume", "expected_peer_volume", "monitoring_status"]} />; }
 
-function EntityRiskTable({ entities }: { entities: EntityRisk[] }) {
-  const top = [...entities].sort((a, b) => b.risk_score - a.risk_score).slice(0, 10);
+export default function App() { const [path, setPath] = useState("/"); useEffect(() => setPath(window.location.pathname), []); const page = path === "/assessment" ? <Assessment /> : path === "/findings" ? <Findings /> : path === "/evidence" ? <Evidence /> : path === "/assets" ? <Assets /> : path === "/data" ? <DataSystem /> : path === "/prioritizer" ? <PriorityWorkspace /> : path === "/reports" ? <Reports /> : <Overview />; return <Shell>{page}</Shell>; }
 
-  return (
-    <div className="card">
-      <div style={{ marginBottom: 16 }}>
-        <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>Top Entity Risk Scores</h3>
-        <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Analysts and assets ranked by composite risk.</p>
-      </div>
-      <table className="sat-table">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Entity</th>
-            <th>Speed Anomalies</th>
-            <th>Rep. Notes</th>
-            <th>Risk Score</th>
-          </tr>
-        </thead>
-        <tbody>
-          {top.map((e, i) => {
-            const barW = Math.round(e.risk_score);
-            const color =
-              e.risk_score > 70 ? "var(--danger)" :
-              e.risk_score > 40 ? "var(--warning)" :
-              "var(--success)";
-            return (
-              <tr key={e.entity}>
-                <td style={{ color: "var(--text-muted)", width: 32 }}>{i + 1}</td>
-                <td style={{ fontWeight: 600, color: "var(--text-primary)", fontSize: 13 }}>
-                  {e.blind_spot ? (
-                    <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span className="chip chip-blind" style={{ fontSize: 9 }}>ASSET</span>
-                      {e.entity}
-                    </span>
-                  ) : e.entity}
-                </td>
-                <td style={{ color: "var(--text-secondary)" }}>{e.speed_anomalies ?? 0}</td>
-                <td style={{ color: "var(--text-secondary)" }}>{e.repetitive_notes ?? 0}</td>
-                <td>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div
-                      style={{
-                        flex: 1,
-                        height: 4,
-                        background: "var(--bg-elevated)",
-                        borderRadius: 2,
-                        overflow: "hidden",
-                      }}
-                    >
-                      <div
-                        style={{
-                          width: `${barW}%`,
-                          height: "100%",
-                          background: color,
-                          borderRadius: 2,
-                          transition: "width 0.6s ease",
-                        }}
-                      />
-                    </div>
-                    <span
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 700,
-                        color,
-                        width: 36,
-                        textAlign: "right",
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {e.risk_score}
-                    </span>
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ── Main Page ────────────────────────────────────────────────
-
-export default function DashboardPage() {
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
-
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await axios.get<DashboardData>(`${API_BASE}/api/dashboard/summary`, {
-        timeout: 10_000,
-      });
-      setData(res.data);
-      setLastRefresh(new Date());
-    } catch (err: any) {
-      setError(
-        err?.response?.status === 503
-          ? "No data loaded yet. The analytics engine is warming up or no CSV has been uploaded."
-          : `Could not connect to backend at ${API_BASE}. Is uvicorn running?`
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  return (
-    <div style={{ padding: "28px 32px", maxWidth: 1400, margin: "0 auto" }}>
-
-      {/* ── Page header ── */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          marginBottom: 28,
-          flexWrap: "wrap",
-          gap: 16,
-        }}
-      >
-        <div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, marginBottom: 4, letterSpacing: "-0.03em" }}>
-            SOC Audit Dashboard
-          </h1>
-          <p style={{ fontSize: 13, color: "var(--text-muted)" }}>
-            Automated anomaly detection for supervisory review.{" "}
-            {lastRefresh && (
-              <span>Last updated: {lastRefresh.toLocaleTimeString("en-IN")}</span>
-            )}
-          </p>
-        </div>
-
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {data && (
-            <RiskScoreBadge score={data.summary.overall_risk_score} size={72} />
-          )}
-          <button
-            className="btn btn-ghost"
-            onClick={fetchData}
-            id="refresh-btn"
-            title="Refresh data"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              style={{ transform: loading ? "rotate(360deg)" : "none", transition: "transform 0.5s" }}
-            >
-              <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-            </svg>
-            Refresh
-          </button>
-        </div>
-      </div>
-
-      {/* ── Error state ── */}
-      {error && (
-        <div
-          style={{
-            background: "var(--danger-dim)",
-            border: "1px solid rgba(239,68,68,0.3)",
-            borderRadius: 10,
-            padding: "16px 20px",
-            marginBottom: 24,
-            color: "var(--danger)",
-            fontSize: 13,
-          }}
-        >
-          <strong>Connection Error:</strong> {error}
-        </div>
-      )}
-
-      {/* ── Loading skeleton ── */}
-      {loading && !data && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <div style={{ display: "flex", gap: 16 }}>
-            {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} height={100} />)}
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-            <Skeleton height={360} />
-            <Skeleton height={360} />
-          </div>
-          <Skeleton height={400} />
-        </div>
-      )}
-
-      {/* ── Dashboard content ── */}
-      {data && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-
-          {/* Metrics bar */}
-          <MetricsBar summary={data.summary} />
-
-          <div className="glow-line" />
-
-          {/* Charts row */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-            <SpeedScatterPlot anomalies={data.speed_anomalies} />
-            <BlindSpotBarChart blindSpots={data.blind_spots} />
-          </div>
-
-          {/* Entity risk + upload row */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 20 }}>
-            <EntityRiskTable entities={data.summary.entity_risk} />
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {/* Upload zone */}
-              <div className="card" style={{ padding: 0 }}>
-                <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--border)" }}>
-                  <h3 style={{ fontSize: 13, fontWeight: 700 }}>Upload New Dataset</h3>
-                  <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
-                    Replace the current CSV to re-run analysis.
-                  </p>
-                </div>
-                <div style={{ padding: 20 }}>
-                  <UploadZone onUploaded={fetchData} />
-                </div>
-              </div>
-
-              {/* Quick stats */}
-              <div className="card">
-                <h3 style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Analysis Summary</h3>
-                {[
-                  ["Total Tickets Analysed", data.summary.total_alerts.toLocaleString(), "var(--accent)"],
-                  ["Total Flagged Items", data.summary.total_flagged_anomalies.toLocaleString(), "var(--danger)"],
-                  ["Speed Anomalies", data.summary.speed_anomalies_count.toString(), "var(--danger)"],
-                  ["Note Clusters", data.summary.repetitive_notes_clusters.toString(), "var(--warning)"],
-                  ["Affected Tickets (Notes)", data.summary.repetitive_notes_tickets.toString(), "var(--warning)"],
-                  ["Silent Critical Assets", data.summary.blind_spots_count.toString(), "var(--purple)"],
-                ].map(([label, val, color]) => (
-                  <div
-                    key={label}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "7px 0",
-                      borderBottom: "1px solid var(--border-subtle)",
-                    }}
-                  >
-                    <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{label}</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color, fontVariantNumeric: "tabular-nums" }}>
-                      {val}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="glow-line" />
-
-          {/* Full drill-down table */}
-          <AnomalyTable
-            speedAnomalies={data.speed_anomalies}
-            repetitiveNotes={data.repetitive_notes}
-            blindSpots={data.blind_spots}
-          />
-
-          {/* Footer */}
-          <div
-            style={{
-              padding: "16px 0",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              borderTop: "1px solid var(--border-subtle)",
-              fontSize: 11,
-              color: "var(--text-muted)",
-            }}
-          >
-            <span>SAT-SA v1.0 — Air-Gapped SOC Analytics Tool</span>
-            <span>All processing is local. Zero network egress.</span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}

@@ -6,24 +6,24 @@ interface MetricCardProps {
   label: string;
   value: number | string;
   subtext?: string;
-  color?: "accent" | "danger" | "warning" | "success" | "purple";
+  color?: "accent" | "danger" | "success" | "navy" | "black";
   icon: React.ReactNode;
 }
 
 function MetricCard({ label, value, subtext, color = "accent", icon }: MetricCardProps) {
   const colorMap: Record<string, string> = {
-    accent:  "var(--accent)",
-    danger:  "var(--danger)",
-    warning: "var(--warning)",
-    success: "var(--success)",
-    purple:  "var(--purple)",
+    accent:  "#0B2A4A",
+    danger:  "#DC2626",
+    success: "#16A34A",
+    navy:    "#0B2A4A",
+    black:   "#000000",
   };
   const dimMap: Record<string, string> = {
-    accent:  "var(--accent-glow)",
-    danger:  "var(--danger-dim)",
-    warning: "var(--warning-dim)",
-    success: "var(--success-dim)",
-    purple:  "var(--purple-dim)",
+    accent:  "#FFFFFF",
+    danger:  "#FFFFFF",
+    success: "#FFFFFF",
+    navy:    "#FFFFFF",
+    black:   "#FFFFFF",
   };
 
   return (
@@ -129,7 +129,7 @@ export default function MetricsBar({ summary }: MetricsBarProps) {
         label="Repetitive Note Clusters"
         value={summary.repetitive_notes_clusters}
         subtext={`${summary.repetitive_notes_tickets} tickets affected`}
-        color="warning"
+        color="navy"
         icon={
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
@@ -142,7 +142,7 @@ export default function MetricsBar({ summary }: MetricsBarProps) {
         label="Telemetry Blind Spots"
         value={summary.blind_spots_count}
         subtext="Silent critical assets"
-        color="purple"
+        color="navy"
         icon={
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>
@@ -161,7 +161,7 @@ export default function MetricsBar({ summary }: MetricsBarProps) {
         }
         color={
           summary.overall_risk_score > 70 ? "danger" :
-          summary.overall_risk_score > 40 ? "warning" : "success"
+          summary.overall_risk_score > 40 ? "navy" : "success"
         }
         icon={
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

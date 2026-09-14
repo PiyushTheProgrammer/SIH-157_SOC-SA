@@ -5,6 +5,17 @@ const nextConfig: NextConfig = {
   images: { unoptimized: true },
   // Suppress noisy hydration warnings from browser extensions
   reactStrictMode: true,
+  async rewrites() {
+    return [
+      { source: "/assessment", destination: "/" },
+      { source: "/findings", destination: "/" },
+      { source: "/evidence", destination: "/" },
+      { source: "/assets", destination: "/" },
+      { source: "/data", destination: "/" },
+      { source: "/reports", destination: "/" },
+      { source: "/prioritizer", destination: "/" },
+    ];
+  },
 };
 
 export default nextConfig;

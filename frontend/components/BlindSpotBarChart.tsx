@@ -35,27 +35,26 @@ const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?:
   return (
     <div
       style={{
-        background: "var(--bg-elevated)",
-        border: `1px solid ${isSilent ? "rgba(239,68,68,0.4)" : "var(--border)"}`,
-        borderRadius: 8,
+        background: "#FFFFFF",
+        border: `1px solid ${isSilent ? "#DC2626" : "#000000"}`,
+        borderRadius: 4,
         padding: "12px 16px",
         minWidth: 200,
-        boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
       }}
     >
-      <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: 8, fontSize: 13 }}>
+      <div style={{ fontWeight: 700, color: "#000000", marginBottom: 8, fontSize: 13 }}>
         {label}
       </div>
       {isSilent && (
         <div
           style={{
-            background: "var(--danger-dim)",
-            border: "1px solid rgba(239,68,68,0.25)",
+            background: "#FFFFFF",
+            border: "1px solid #DC2626",
             borderRadius: 4,
             padding: "4px 8px",
             fontSize: 11,
             fontWeight: 700,
-            color: "var(--danger)",
+            color: "#DC2626",
             marginBottom: 8,
             letterSpacing: "0.05em",
           }}
@@ -109,21 +108,21 @@ export default function BlindSpotBarChart({ blindSpots }: Props) {
       {/* Header */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--purple)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0B2A4A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
             <line x1="1" y1="1" x2="23" y2="23"/>
           </svg>
-          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#000000" }}>
             Asset Telemetry — Negative Space
           </span>
           <span
             style={{
               marginLeft: "auto",
               fontSize: 11,
-              background: "var(--purple-dim)",
-              color: "var(--purple)",
-              border: "1px solid rgba(139,92,246,0.25)",
-              borderRadius: 999,
+              background: "#FFFFFF",
+              color: "#0B2A4A",
+              border: "1px solid #0B2A4A",
+              borderRadius: 4,
               padding: "1px 8px",
               fontWeight: 600,
             }}
@@ -157,7 +156,7 @@ export default function BlindSpotBarChart({ blindSpots }: Props) {
             domain={[0, Math.ceil(maxExpected * 1.2)]}
           />
 
-          <Tooltip content={<CustomTooltip />} cursor={{ fill: "rgba(59,130,246,0.04)" }} />
+          <Tooltip content={<CustomTooltip />} cursor={{ fill: "#FFFFFF" }} />
 
           <Legend
             wrapperStyle={{ fontSize: 12, color: "var(--text-muted)", paddingTop: 4 }}
@@ -167,15 +166,15 @@ export default function BlindSpotBarChart({ blindSpots }: Props) {
           />
 
           {/* Expected mean — ghost bars */}
-          <Bar dataKey="expected_mean" fill="var(--border)" radius={[4, 4, 0, 0]} opacity={0.5} name="expected_mean" />
+          <Bar dataKey="expected_mean" fill="#000000" radius={[4, 4, 0, 0]} opacity={0.65} name="expected_mean" />
 
-          {/* Actual alerts — red for silent, blue otherwise */}
+          {/* Actual alerts — red for silent, navy otherwise */}
           <Bar dataKey="actual_alerts" radius={[4, 4, 0, 0]} name="actual_alerts">
             {data.map((entry, index) => (
               <Cell
                 key={`cell-${index}`}
-                fill={entry.isSilent ? "var(--danger)" : "var(--accent)"}
-                opacity={entry.isSilent ? 0.9 : 0.75}
+                fill={entry.isSilent ? "#DC2626" : "#0B2A4A"}
+                opacity={entry.isSilent ? 1 : 0.9}
               />
             ))}
           </Bar>

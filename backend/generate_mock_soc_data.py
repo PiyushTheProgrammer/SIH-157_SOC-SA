@@ -372,6 +372,42 @@ def _shift_from_hour(hour: int) -> str:
         return "NIGHT"
 
 
+def _add_lifecycle_evidence(ticket: dict) -> dict:
+    """Add deterministic lifecycle evidence fields to legacy-compatible tickets."""
+    severe = ticket["alert_severity"] in {"CRITICAL", "HIGH"}
+    speed_gap = ticket["alert_severity"] == "CRITICAL" and ticket["time_to_close"] < 15
+    repetitive_gap = ticket["resolution_notes"] in GENERIC_NOTES
+    investigation_ok = not speed_gap
+    evidence_ok = investigation_ok and not repetitive_gap
+    escalation_required = severe
+    escalation_recorded = bool(ticket["escalated"]) if escalation_required else False
+    response_recorded = not speed_gap
+    recovery_recorded = not speed_gap
+    evidence_ref = f"EV-{ticket['ticket_id']}" if evidence_ok else ""
+    return {
+        **ticket,
+        "case_id": f"CASE-{ticket['ticket_id'][4:]}",
+        "investigation_started": ticket["timestamp"] if investigation_ok else "",
+        "investigator": ticket["assigned_analyst"] if investigation_ok else "",
+        "investigation_duration_seconds": max(ticket["time_to_close"] - ticket["time_to_acknowledge"], 0) if investigation_ok else 0,
+        "evidence_attached": evidence_ok,
+        "ioc_checked": investigation_ok,
+        "logs_correlated": evidence_ok,
+        "root_cause_documented": evidence_ok,
+        "investigation_conclusion": ticket["resolution_notes"] if investigation_ok and not repetitive_gap else "",
+        "escalation_required": escalation_required,
+        "escalation_recorded": escalation_recorded,
+        "escalation_timestamp": ticket["timestamp"] if escalation_recorded else "",
+        "response_recorded": response_recorded,
+        "response_action": "Containment and remediation recorded" if response_recorded else "",
+        "recovery_recorded": recovery_recorded,
+        "closure_recorded": True,
+        "closure_reason": "Resolved per supplied record",
+        "closure_evidence": evidence_ref,
+        "evidence_reference": evidence_ref,
+    }
+
+
 # ──────────────────────────────────────────────
 # MAIN ORCHESTRATOR
 # ──────────────────────────────────────────────
@@ -429,6 +465,7 @@ def generate_dataset(outdir: str) -> None:
         ticket_counter += 1
 
     # Shuffle to mix anomalies into the normal flow
+    all_tickets = [_add_lifecycle_evidence(ticket) for ticket in all_tickets]
     random.shuffle(all_tickets)
 
     # ── Write soc_alerts.csv ──
@@ -446,6 +483,25 @@ def generate_dataset(outdir: str) -> None:
         "resolution_notes",
         "escalated",
         "shift",
+        "case_id",
+        "investigation_started",
+        "investigator",
+        "investigation_duration_seconds",
+        "evidence_attached",
+        "ioc_checked",
+        "logs_correlated",
+        "root_cause_documented",
+        "investigation_conclusion",
+        "escalation_required",
+        "escalation_recorded",
+        "escalation_timestamp",
+        "response_recorded",
+        "response_action",
+        "recovery_recorded",
+        "closure_recorded",
+        "closure_reason",
+        "closure_evidence",
+        "evidence_reference",
     ]
     with open(alerts_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)

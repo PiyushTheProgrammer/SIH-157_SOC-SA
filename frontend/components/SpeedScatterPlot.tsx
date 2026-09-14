@@ -39,10 +39,10 @@ const SEVERITY_X: Record<string, number> = {
 };
 
 const SEVERITY_COLOR: Record<string, string> = {
-  LOW:      "#10b981",
-  MEDIUM:   "#fbbf24",
-  HIGH:     "#f59e0b",
-  CRITICAL: "#ef4444",
+  LOW:      "#16A34A",
+  MEDIUM:   "#000000",
+  HIGH:     "#0B2A4A",
+  CRITICAL: "#DC2626",
 };
 
 const SEVERITY_LABELS: Record<number, string> = {
@@ -61,15 +61,14 @@ const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: any[] 
   return (
     <div
       style={{
-        background: "var(--bg-elevated)",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
+        background: "#FFFFFF",
+        border: "1px solid #000000",
+        borderRadius: 4,
         padding: "12px 16px",
         minWidth: 220,
-        boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
       }}
     >
-      <div style={{ fontWeight: 700, color: "var(--text-primary)", marginBottom: 8, fontSize: 13 }}>
+      <div style={{ fontWeight: 700, color: "#000000", marginBottom: 8, fontSize: 13 }}>
         {d.ticket_id}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -108,20 +107,20 @@ export default function SpeedScatterPlot({ anomalies }: Props) {
       {/* Header */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
           </svg>
-          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#000000" }}>
             Resolution Speed Anomalies
           </span>
           <span
             style={{
               marginLeft: "auto",
               fontSize: 11,
-              background: "var(--danger-dim)",
-              color: "var(--danger)",
-              border: "1px solid rgba(239,68,68,0.25)",
-              borderRadius: 999,
+              background: "#FFFFFF",
+              color: "#DC2626",
+              border: "1px solid #DC2626",
+              borderRadius: 4,
               padding: "1px 8px",
               fontWeight: 600,
             }}
@@ -187,10 +186,10 @@ export default function SpeedScatterPlot({ anomalies }: Props) {
           {/* HIGH threshold line at 60s */}
           <ReferenceLine
             y={60}
-            stroke="var(--warning)"
+            stroke="#0B2A4A"
             strokeDasharray="6 3"
             strokeOpacity={0.6}
-            label={{ value: "HIGH threshold (60s)", fill: "var(--warning)", fontSize: 10, position: "right" }}
+            label={{ value: "HIGH threshold (60s)", fill: "#0B2A4A", fontSize: 10, position: "right" }}
           />
 
           <Scatter

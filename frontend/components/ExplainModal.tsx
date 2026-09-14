@@ -23,8 +23,8 @@ function Spinner() {
       style={{
         width: 20,
         height: 20,
-        border: "2px solid var(--border)",
-        borderTopColor: "var(--accent)",
+        border: "2px solid #000000",
+        borderTopColor: "#0B2A4A",
         borderRadius: "50%",
       }}
       className="animate-spin"
@@ -45,10 +45,10 @@ function typeLabel(type: string): string {
 function typeColor(type: string): string {
   return (
     {
-      speed_anomaly:    "var(--danger)",
-      repetitive_notes: "var(--warning)",
-      blind_spot:       "var(--purple)",
-    }[type] ?? "var(--accent)"
+      speed_anomaly:    "#DC2626",
+      repetitive_notes: "#000000",
+      blind_spot:       "#0B2A4A",
+    }[type] ?? "#0B2A4A"
   );
 }
 
@@ -236,7 +236,7 @@ export default function ExplainModal({ anomalyType, rowData, onClose }: Props) {
               gap: 8,
             }}
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0B2A4A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1H1a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/>
             </svg>
             AI Audit Finding
