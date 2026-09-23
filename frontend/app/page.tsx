@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "";
 type RecordValue = Record<string, any>;
-const nav = [["/", "Overview"], ["/assessment", "Assessment"], ["/findings", "Findings"], ["/evidence", "Evidence Review"], ["/assets", "Asset Monitoring"], ["/data", "Data & System"], ["/reports", "Reports"], ["/prioritizer", "AI Prioritizer"]];
+const nav = [["/", "Overview"], ["/assessment", "Assessment"], ["/findings", "Findings"], ["/evidence", "Evidence Review"], ["/assets", "Asset Monitoring"], ["/data", "Data & System"], ["/reports", "Reports"], ["/prioritizer", "AI Prioritizer"], ["/examine-case", "Examine Case"]];
 let overviewAnalyticsData: { dashboard: RecordValue; assessment: RecordValue } | null = null;
 
 async function request(path: string, options?: RequestInit) {
@@ -19,9 +19,23 @@ function Shell({ children }: { children: React.ReactNode }) {
   useEffect(() => setPath(window.location.pathname), []);
   return <div className="shell"><aside className="sidebar"><div className="brand"><strong>SAT-SA</strong><span>Supervisory Analytics for SOC Assessment</span></div><nav className="nav" aria-label="Primary navigation">{nav.map(([href, label]) => <a className={path === href ? "active" : ""} href={href} key={href}>{label}</a>)}</nav><div className="sidebar-meta"><span>Dataset</span><div>SOC synthetic demonstration dataset</div><span>Processing</span><div>Local</div><span>Status</span><div className="operational"><b />Operational</div></div></aside><section className="main"><header className="topbar"><h1>SAT-SA</h1><div className="topbar-meta"><span>Assessment Period<br /><b>01 Aug 2026 - 30 Aug 2026</b></span><span className="system-status"><b />System Operational</span></div></header>{children}<footer className="footer"><span>SAT-SA Prototype</span><span>Evidence-based supervisory assessment using synthetic local data.</span></footer></section></div>;
 }
-function Page({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) { const statisticalSection = title === "Supervisory Assessment Overview" && overviewAnalyticsData ? <AnalyticsStatistics dashboard={overviewAnalyticsData.dashboard} assessment={overviewAnalyticsData.assessment} /> : null; return <main className="content"><h1 className="page-title">{title}</h1><p className="subtitle">{subtitle}</p>{statisticalSection}{children}</main>; }
+function Page({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) { const statisticalSection = title === "Supervisory Assessment Overview" && overviewAnalyticsData ? <AnalyticsStatistics dashboard={overviewAnalyticsData.dashboard} assessment={overviewAnalyticsData.assessment} /> : null; return <main className="content"><h1 className="page-title">{title}</h1><p className="subtitle">{subtitle}</p>{title === "Supervisory Assessment Overview" && <CaseIntake />}{statisticalSection}{children}</main>; }
 function LoadState({ error }: { error: string | null }) { return error ? <div className="error">{error}</div> : <div className="panel">Loading local assessment data...</div>; }
 function Tag({ value }: { value: string }) { const tone = ["Adequate", "Observed", "LOW", "RESOLVED", "CLOSED"].includes(value) ? "green" : ["Attention", "Missing", "CRITICAL", "URGENT"].includes(value) ? "red" : "amber"; return <span className={`tag ${tone}`}>{value}</span>; }
+
+function CaseIntake() {
+  const [file, setFile] = useState<File | null>(null); const [message, setMessage] = useState(""); const [error, setError] = useState(""); const [uploading, setUploading] = useState(false);
+  async function examine() {
+    if (!file) return;
+    setUploading(true); setMessage(""); setError("");
+    try { const form = new FormData(); form.append("file", file); const response = await request("/api/upload", { method: "POST", body: form }); const result = await response.json(); setMessage(result.message ?? "Case uploaded successfully."); }
+    catch (uploadError: any) { setError(uploadError.message || "Unable to connect to the local assessment API."); }
+    finally { setUploading(false); }
+  }
+  return <section className="panel case-intake"><div className="section-heading"><div><h2>Examine Case</h2><p className="chart-note">Upload operational evidence for local review.</p></div><span className="tag amber">LOCAL</span></div><div className="case-intake-controls"><label className="file-picker">Choose evidence<input type="file" accept=".csv,.json,.pdf,.docx" onChange={event => setFile(event.target.files?.[0] ?? null)} /></label><button className="btn-primary" onClick={examine} disabled={!file || uploading}>{uploading ? "Uploading..." : "Examine Case"}</button></div><p className="file-name">{file ? `${file.name} selected` : "CSV, JSON, PDF, or DOCX"}</p>{message && <div className="notice">{message}</div>}{error && <div className="error">{error}</div>}</section>;
+}
+
+function ExamineCase() { return <Page title="Examine Case" subtitle="Upload a case file and send it to the local assessment API for review."><CaseIntake /></Page>; }
 
 function SeverityDonut({ counts }: { counts: Record<string, number> }) {
   const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
@@ -78,5 +92,5 @@ function DataSystem() { const [data, setData] = useState<RecordValue | null>(nul
 function Evidence() { return <SimpleDataPage endpoint="/api/evidence" title="Evidence Review" subtitle="Lifecycle evidence review. Missing means not observed in the supplied records." columns={["ticket_id", "severity", "alert_type", "analyst", "asset", "assessment"]} />; }
 function Assets() { return <SimpleDataPage endpoint="/api/assets" title="Asset Monitoring" subtitle="Peer comparison of observed alert volume and telemetry coverage." columns={["asset", "criticality", "type", "department", "alert_volume", "expected_peer_volume", "monitoring_status"]} />; }
 
-export default function App() { const [path, setPath] = useState("/"); useEffect(() => setPath(window.location.pathname), []); const page = path === "/assessment" ? <Assessment /> : path === "/findings" ? <Findings /> : path === "/evidence" ? <Evidence /> : path === "/assets" ? <Assets /> : path === "/data" ? <DataSystem /> : path === "/prioritizer" ? <PriorityWorkspace /> : path === "/reports" ? <Reports /> : <Overview />; return <Shell>{page}</Shell>; }
+export default function App() { const [path, setPath] = useState("/"); useEffect(() => setPath(window.location.pathname), []); const page = path === "/assessment" ? <Assessment /> : path === "/findings" ? <Findings /> : path === "/evidence" ? <Evidence /> : path === "/assets" ? <Assets /> : path === "/data" ? <DataSystem /> : path === "/prioritizer" ? <PriorityWorkspace /> : path === "/reports" ? <Reports /> : path === "/examine-case" ? <ExamineCase /> : <Overview />; return <Shell>{page}</Shell>; }
 

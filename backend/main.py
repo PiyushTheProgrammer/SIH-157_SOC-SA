@@ -293,14 +293,30 @@ async def health_check():
     }
 
 
-@app.post("/api/upload", summary="Upload SOC alert CSV and trigger analysis")
+@app.post("/api/upload", summary="Upload case evidence and trigger analysis for CSV files")
 async def upload_csv(file: UploadFile = File(...)):
     """
-    Accept a CSV file upload, save it locally, and re-run the analytics engine.
-    The dashboard summary is refreshed automatically.
+    Accept supported case evidence. CSV uploads replace the alert dataset and
+    refresh analytics; other supported formats are stored for case review.
     """
-    if not file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Only CSV files are accepted.")
+    filename = file.filename or "case-file"
+    extension = Path(filename).suffix.lower()
+    if extension not in {".csv", ".json", ".pdf", ".docx"}:
+        raise HTTPException(status_code=400, detail="Supported files are CSV, JSON, PDF, and DOCX.")
+
+    if extension != ".csv":
+        case_dir = DATA_DIR / "case_uploads"
+        case_dir.mkdir(parents=True, exist_ok=True)
+        destination = case_dir / filename
+        async with aiofiles.open(destination, "wb") as out:
+            while chunk := await file.read(1024 * 64):
+                await out.write(chunk)
+        return {
+            "status": "accepted",
+            "message": f"{filename} uploaded. Case evidence is ready for local review.",
+            "filename": filename,
+            "saved_to": str(destination),
+        }
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     dest = DATA_DIR / "soc_alerts.csv"
@@ -329,7 +345,7 @@ async def upload_csv(file: UploadFile = File(...)):
         "status": "accepted",
         "message": "File saved. Analytics engine is running in the background. "
                    "The dashboard will refresh automatically.",
-        "filename": file.filename,
+        "filename": filename,
         "saved_to": str(dest),
     }
 
