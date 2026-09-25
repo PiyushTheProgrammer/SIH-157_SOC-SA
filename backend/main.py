@@ -23,6 +23,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -30,7 +31,7 @@ from typing import Any, Optional
 
 import aiofiles
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -43,9 +44,8 @@ from report_generator import build_report, render_report
 
 # ── Database (PostgreSQL via SQLAlchemy — air-gap safe) ──────────────────────
 from database import get_db, init_db
-from models import SocAlertRecord
+from models import SOCAlert, SocAlertRecord
 from sqlalchemy.orm import Session
-from fastapi import Depends
 
 # ── LangChain (local only — no cloud imports) ──
 try:
@@ -92,44 +92,60 @@ _cache_lock = asyncio.Lock()
 
 def _run_engine(alerts_path: Path, inv_path: Path) -> dict[str, Any]:
     """Run the analytics orchestrator synchronously and return a dict."""
-    orchestrator = AnalyticsOrchestrator(
-        alerts_path=alerts_path,
-        inventory_path=inv_path,
-    )
-    report: AnomalyReport = orchestrator.run()
-    return report.to_dict()
+    try:
+        orchestrator = AnalyticsOrchestrator(
+            alerts_path=alerts_path,
+            inventory_path=inv_path,
+        )
+        report: AnomalyReport = orchestrator.run()
+        return report.to_dict()
+    except Exception as e:
+        logger.error("ML Engine Error: %s", str(e), exc_info=True)
+        raise HTTPException(
+            status_code=400,
+            detail=f"ML Engine Error: {str(e)}",
+        ) from e
 
 
 async def _refresh_cache(alerts_path: Path, inv_path: Path) -> None:
-    """Run the analytics, assessment and priority engines."""
+    """Run the analytics, assessment and priority engines with graceful error propagation."""
     global _report_cache, _assessment_cache, _priority_cache, _alerts_cache, _inventory_cache
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _run_engine, alerts_path, inv_path)
-    assessment = await loop.run_in_executor(
-        None,
-        lambda: build_assessment(
-            pd.read_csv(alerts_path),
-            pd.read_csv(inv_path),
-            result,
-        ),
-    )
-    alerts_df = pd.read_csv(alerts_path)
-    inventory_df = pd.read_csv(inv_path)
-    priorities = await loop.run_in_executor(
-        None,
-        lambda: generate_priority_queue(alerts_df, inventory_df, assessment, result),
-    )
-    for item in priorities:
-        item["status"] = _priority_status.get(item["ticket_id"], item.get("status", "NEW"))
-    async with _cache_lock:
-        _report_cache = result
-        _assessment_cache = assessment
-        _priority_cache = priorities
-        _alerts_cache = alerts_df
-        _inventory_cache = inventory_df
-    logger.info("Report cache refreshed — %d speed anomalies, %d blind spots",
-                result["summary"]["speed_anomalies_count"],
-                result["summary"]["blind_spots_count"])
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _run_engine, alerts_path, inv_path)
+        assessment = await loop.run_in_executor(
+            None,
+            lambda: build_assessment(
+                pd.read_csv(alerts_path),
+                pd.read_csv(inv_path),
+                result,
+            ),
+        )
+        alerts_df = pd.read_csv(alerts_path)
+        inventory_df = pd.read_csv(inv_path)
+        priorities = await loop.run_in_executor(
+            None,
+            lambda: generate_priority_queue(alerts_df, inventory_df, assessment, result),
+        )
+        for item in priorities:
+            item["status"] = _priority_status.get(item["ticket_id"], item.get("status", "NEW"))
+        async with _cache_lock:
+            _report_cache = result
+            _assessment_cache = assessment
+            _priority_cache = priorities
+            _alerts_cache = alerts_df
+            _inventory_cache = inventory_df
+        logger.info("Report cache refreshed — %d speed anomalies, %d blind spots",
+                    result["summary"]["speed_anomalies_count"],
+                    result["summary"]["blind_spots_count"])
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to refresh analytics cache: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=400,
+            detail=f"ML Engine Error: {str(exc)}",
+        ) from exc
 
 
 # ══════════════════════════════════════════════════
@@ -304,22 +320,34 @@ async def health_check():
     }
 
 
-@app.post("/api/upload", summary="Upload case evidence and trigger analysis for CSV files")
-async def upload_csv(
+@app.post("/upload", summary="Upload and ingest SOC alert dataset (.csv or .json)")
+@app.post("/api/upload", summary="Upload and ingest SOC alert dataset (.csv or .json)")
+async def upload_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
     """
-    Accept supported case evidence. CSV uploads replace the alert dataset,
-    bulk-insert all rows into PostgreSQL database, and refresh analytics;
-    other supported formats are stored for case review.
+    Ingest SOC alert datasets in CSV or JSON format.
+    
+    Workflow:
+      1. Validates file extension (.csv or .json).
+      2. Reads the file contents using pandas into a DataFrame.
+      3. Normalizes columns and converts rows into a list of dictionaries.
+      4. Performs a bulk insert into the PostgreSQL SOCAlert table.
+      5. Updates the local cache and triggers background analytics.
+      6. Returns a success JSON response with the total ingested records count.
     """
-    filename = file.filename or "case-file"
+    filename = file.filename or "uploaded_alerts"
     extension = Path(filename).suffix.lower()
-    if extension not in {".csv", ".json", ".pdf", ".docx"}:
-        raise HTTPException(status_code=400, detail="Supported files are CSV, JSON, PDF, and DOCX.")
 
-    if extension != ".csv":
+    if extension not in {".csv", ".json", ".pdf", ".docx"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file format. Please upload a .csv or .json file.",
+        )
+
+    # Handle document uploads (PDF/DOCX) for case reviews
+    if extension in {".pdf", ".docx"}:
         case_dir = DATA_DIR / "case_uploads"
         case_dir.mkdir(parents=True, exist_ok=True)
         destination = case_dir / filename
@@ -327,93 +355,140 @@ async def upload_csv(
             while chunk := await file.read(1024 * 64):
                 await out.write(chunk)
         return {
-            "status": "accepted",
+            "status": "success",
             "message": f"{filename} uploaded. Case evidence is ready for local review.",
             "filename": filename,
             "saved_to": str(destination),
+            "records_ingested": 0,
+            "total_records": 0,
         }
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    dest = DATA_DIR / "soc_alerts.csv"
+    # Read binary content into memory
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
 
-    # Stream file to disk asynchronously
-    async with aiofiles.open(dest, "wb") as out:
-        while chunk := await file.read(1024 * 64):  # 64 KB chunks
-            await out.write(chunk)
-
-    logger.info("Uploaded CSV saved to %s (%d bytes)", dest, dest.stat().st_size)
-
-    # ── Bulk-insert CSV rows into PostgreSQL ──────────────────────────────────
+    # Parse into pandas DataFrame
     try:
-        df = pd.read_csv(dest)
+        if extension == ".csv":
+            df = pd.read_csv(io.BytesIO(contents))
+        elif extension == ".json":
+            df = pd.read_json(io.BytesIO(contents))
+        else:
+            raise ValueError("Unsupported extension")
+    except Exception as parse_exc:
+        logger.error("Failed to parse %s file: %s", extension, parse_exc)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to parse {extension.upper()} file: {str(parse_exc)}",
+        )
 
-        # Normalise column names: strip whitespace and lower-case
-        df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+    if df.empty:
+        raise HTTPException(status_code=400, detail="The uploaded file contains no data rows.")
 
-        # Map common boolean representations to Python bool
-        def _to_bool(val) -> bool | None:
-            if isinstance(val, bool):
-                return val
-            if isinstance(val, (int, float)):
-                return bool(val)
-            if isinstance(val, str):
-                return val.strip().lower() in {"true", "1", "yes"}
+    # Normalize column names: lowercase, strip, and replace spaces with underscores
+    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+
+    # Helper cleaners
+    def _clean_str(val: Any) -> Optional[str]:
+        if pd.isna(val) or val is None:
+            return None
+        val_str = str(val).strip()
+        return val_str if val_str else None
+
+    def _clean_int(val: Any) -> Optional[int]:
+        if pd.isna(val) or val is None:
+            return None
+        try:
+            return int(float(val))
+        except (ValueError, TypeError):
             return None
 
-        records: list[SocAlertRecord] = []
-        for _, row in df.iterrows():
-            records.append(
-                SocAlertRecord(
-                    alert_id=str(row.get("alert_id", "")) or None,
-                    entity_id=str(row.get("entity_id", "")) or None,
-                    asset_name=str(row.get("asset_name", "")) or None,
-                    alert_category=str(row.get("alert_category", "")) or None,
-                    alert_severity=str(row.get("alert_severity", "")) or None,
-                    time_to_close_seconds=(
-                        int(row["time_to_close_seconds"])
-                        if pd.notna(row.get("time_to_close_seconds"))
-                        else None
-                    ),
-                    escalated=_to_bool(row.get("escalated")),
-                    resolution_notes=str(row.get("resolution_notes", "")) or None,
-                    is_anomaly=False,  # updated later by the analytics engine
-                )
-            )
+    def _clean_bool(val: Any, default: bool = False) -> bool:
+        if pd.isna(val) or val is None:
+            return default
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, (int, float)):
+            return bool(val)
+        if isinstance(val, str):
+            return val.strip().lower() in {"true", "1", "yes", "t"}
+        return default
 
-        # Clear previous upload before inserting the new batch
-        db.query(SocAlertRecord).delete()
-        db.bulk_save_objects(records)
+    # Convert DataFrame rows into a list of dictionaries matching the SOCAlert schema
+    records_data: list[dict[str, Any]] = []
+    for _, row in df.iterrows():
+        # Support both primary schema names and alternative common column names
+        raw_alert_id = row.get("alert_id") if "alert_id" in row else row.get("ticket_id")
+        raw_entity_id = row.get("entity_id") if "entity_id" in row else row.get("entity")
+        raw_asset_name = row.get("asset_name") if "asset_name" in row else (row.get("dest_asset") or row.get("asset"))
+        raw_category = row.get("alert_category") if "alert_category" in row else (row.get("alert_type") or row.get("category"))
+        raw_severity = row.get("alert_severity") if "alert_severity" in row else row.get("severity")
+        raw_ttc = row.get("time_to_close_seconds") if "time_to_close_seconds" in row else row.get("time_to_close")
+        raw_notes = row.get("resolution_notes") if "resolution_notes" in row else row.get("notes")
+
+        record_dict = {
+            "alert_id": _clean_str(raw_alert_id),
+            "entity_id": _clean_str(raw_entity_id),
+            "asset_name": _clean_str(raw_asset_name),
+            "alert_category": _clean_str(raw_category),
+            "alert_severity": _clean_str(raw_severity),
+            "time_to_close_seconds": _clean_int(raw_ttc),
+            "escalated": (
+                _clean_bool(row.get("escalated"))
+                if "escalated" in row and pd.notna(row["escalated"])
+                else None
+            ),
+            "resolution_notes": _clean_str(raw_notes),
+            "is_speed_anomaly": _clean_bool(row.get("is_speed_anomaly"), False),
+            "is_repetitive_anomaly": _clean_bool(row.get("is_repetitive_anomaly"), False),
+            "is_negative_space": _clean_bool(row.get("is_negative_space"), False),
+            "is_anomaly": _clean_bool(row.get("is_anomaly"), False),
+        }
+        records_data.append(record_dict)
+
+    # Perform bulk insert into the SOCAlert table using SQLAlchemy session
+    try:
+        # Clear previous records to keep database state synchronized with the uploaded batch
+        db.query(SOCAlert).delete()
+        db.bulk_insert_mappings(SOCAlert, records_data)
         db.commit()
         logger.info(
-            "PostgreSQL: inserted %d SOC alert records into soc_alert_records table.",
-            len(records),
+            "PostgreSQL: Bulk-inserted %d SOC alert records into soc_alerts table.",
+            len(records_data),
         )
-    except Exception as exc:
+    except Exception as db_exc:
         db.rollback()
-        logger.error("PostgreSQL bulk-insert failed: %s", exc)
-        # Non-fatal: log the error but continue so the analytics engine still runs
-
-    if not INV_CSV.exists():
+        logger.error("PostgreSQL bulk-insert failed: %s", db_exc)
         raise HTTPException(
-            status_code=422,
-            detail=(
-                f"Asset inventory not found at {INV_CSV}. "
-                "Run generate_mock_soc_data.py to create it, or place "
-                "asset_inventory.csv in the data/ directory."
-            ),
+            status_code=500,
+            detail=f"Database ingestion error: {str(db_exc)}",
         )
 
-    # Re-run analytics engine in background — client gets immediate response
-    asyncio.create_task(_refresh_cache(dest, INV_CSV))
+    # Save local copy for air-gapped analytics engine pipeline
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    dest = DATA_DIR / "soc_alerts.csv"
+    df.to_csv(dest, index=False)
+
+    if INV_CSV.exists():
+        try:
+            # Refresh all analytics caches synchronously before responding
+            await _refresh_cache(dest, INV_CSV)
+        except HTTPException:
+            raise
+        except Exception as engine_err:
+            logger.error("ML Engine failed on uploaded file: %s", engine_err, exc_info=True)
+            raise HTTPException(
+                status_code=400,
+                detail=f"ML Engine Error: {str(engine_err)}",
+            )
 
     return {
-        "status": "accepted",
-        "message": "File saved and records stored in local database. "
-                   "Analytics engine is running in the background. "
-                   "The dashboard will refresh automatically.",
+        "status": "success",
+        "message": f"Successfully ingested {len(records_data)} records into the database.",
         "filename": filename,
-        "saved_to": str(dest),
-        "records_inserted": len(records) if "records" in dir() else 0,
+        "records_ingested": len(records_data),
+        "total_records": len(records_data),
     }
 
 

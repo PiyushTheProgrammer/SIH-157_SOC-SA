@@ -196,6 +196,11 @@ def generate_priority_queue(
     if df is None or df.empty:
         return []
 
+    from analytics_engine import _prepare_dataframe, _preprocess_inventory_df
+    df = _prepare_dataframe(df)
+    if inventory_df is not None:
+        inventory_df = _preprocess_inventory_df(inventory_df)
+
     asset_criticality = {}
     if inventory_df is not None and {"asset_id", "asset_criticality"}.issubset(inventory_df.columns):
         asset_criticality = inventory_df.set_index("asset_id")["asset_criticality"].to_dict()

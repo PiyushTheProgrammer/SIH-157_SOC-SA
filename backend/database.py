@@ -1,58 +1,72 @@
 """
 SAT-SA — database.py
-=====================
-Configures the local PostgreSQL database via SQLAlchemy.
+====================
+Configures the local PostgreSQL database connection via SQLAlchemy.
 
-Air-gap compliant: PostgreSQL runs on-premises — zero external calls.
+Air-gap compliant: PostgreSQL runs on-premises — zero external API or cloud dependencies.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- HOW TO SET YOUR PASSWORD
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- Replace the placeholder below with your real credentials:
-   DATABASE_PASSWORD = "your_actual_password_here"
-   DATABASE_USER     = "postgres"          # or your PG user
-   DATABASE_HOST     = "localhost"
-   DATABASE_PORT     = 5432
-   DATABASE_NAME     = "sat_sa_db"         # must already exist in PG
+Connection string format:
+    postgresql://postgres:<password>@localhost:5432/sat_sa_db
 
- Then run once in psql to create the database if needed:
-   CREATE DATABASE sat_sa_db;
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Requirements:
+    - sqlalchemy >= 2.0.0
+    - psycopg2-binary >= 2.9.9
+    - python-dotenv >= 1.0.0
 """
 
 import os
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from typing import Generator
+from urllib.parse import quote_plus
 
-# ── Connection parameters — edit here or provide via environment variables ──
-DATABASE_USER     = os.getenv("DATABASE_USER", "postgres")
-DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD", "YOUR_PASSWORD_HERE")  # <── REPLACE THIS
-DATABASE_HOST     = os.getenv("DATABASE_HOST", "localhost")
-DATABASE_PORT     = int(os.getenv("DATABASE_PORT", "5432"))
-DATABASE_NAME     = os.getenv("DATABASE_NAME", "sat_sa_db")
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
+# Load environment configuration from .env file
+load_dotenv()
+
+# ── Connection Parameters ───────────────────────────────────────────────────
+DATABASE_USER = os.getenv("DATABASE_USER", "postgres")
+DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD", "Admin@123")
+DATABASE_HOST = os.getenv("DATABASE_HOST", "localhost")
+DATABASE_PORT = int(os.getenv("DATABASE_PORT", "5432"))
+DATABASE_NAME = os.getenv("DATABASE_NAME", "sat_sa_db")
+
+# URL-encode password to handle special characters (e.g., '@', ':', '/') safely
+encoded_password = quote_plus(DATABASE_PASSWORD)
+
+# Connection string format: postgresql://postgres:<password>@localhost:5432/sat_sa_db
 SQLALCHEMY_DATABASE_URL = (
-    f"postgresql://{DATABASE_USER}:{DATABASE_PASSWORD}"
-    f"@{DATABASE_HOST}:{DATABASE_PORT}/{DATABASE_NAME}"
+    f"postgresql://{DATABASE_USER}:{encoded_password}@{DATABASE_HOST}:{DATABASE_PORT}/{DATABASE_NAME}"
 )
 
+# ── SQLAlchemy Engine ───────────────────────────────────────────────────────
+# pool_pre_ping tests connection liveness before issuing queries;
+# pool_size and max_overflow handle concurrent API requests efficiently.
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    pool_pre_ping=True,        # verifies connections before use
-    pool_size=5,
-    max_overflow=10,
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# ── Session Factory ─────────────────────────────────────────────────────────
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
+
+# ── Declarative Base Setup ──────────────────────────────────────────────────
+Base = declarative_base()
 
 
-# ── Base class for all ORM models ─────────────────────────────────────────────
-class Base(DeclarativeBase):
-    pass
-
-
-# ── Dependency — yields a DB session and guarantees cleanup ───────────────────
-def get_db():
+# ── Database Dependency for FastAPI Endpoints ───────────────────────────────
+def get_db() -> Generator[Session, None, None]:
+    """
+    FastAPI dependency yielding an independent SQLAlchemy session per request
+    and ensuring proper session closure in the finally block.
+    """
     db = SessionLocal()
     try:
         yield db
@@ -60,12 +74,12 @@ def get_db():
         db.close()
 
 
-# ── Create all tables (idempotent — safe to call multiple times) ───────────────
+# ── Idempotent Table Initialization ─────────────────────────────────────────
 def init_db() -> None:
     """
-    Import all model modules so SQLAlchemy registers their metadata,
-    then issue CREATE TABLE … IF NOT EXISTS for every registered table.
-    Call once at application startup via the FastAPI lifespan hook.
+    Imports all models to register their metadata and executes
+    CREATE TABLE IF NOT EXISTS for each registered table against PostgreSQL.
+    Invoked during FastAPI application startup.
     """
-    import models  # noqa: F401 — side-effect import registers ORM mappings
+    import models  # noqa: F401 — side-effect registers ORM mappings
     Base.metadata.create_all(bind=engine)

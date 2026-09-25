@@ -113,6 +113,9 @@ def _score_ticket(ticket: dict[str, Any]) -> dict[str, float]:
 
 
 def build_assessment(alerts_df: pd.DataFrame, inventory_df: pd.DataFrame, report: dict[str, Any] | None = None) -> dict[str, Any]:
+    from analytics_engine import _prepare_dataframe, _preprocess_inventory_df
+    alerts_df = _prepare_dataframe(alerts_df)
+    inventory_df = _preprocess_inventory_df(inventory_df)
     tickets = [_derive_ticket(row) for _, row in alerts_df.iterrows()]
     ticket_scores = [_score_ticket(ticket) for ticket in tickets]
     attention_findings: list[dict[str, Any]] = []

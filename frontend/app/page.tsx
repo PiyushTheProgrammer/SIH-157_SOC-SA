@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Database, Menu } from "lucide-react";
+import { Sidebar } from "../components/Sidebar";
+import { FindingsTrend } from "../components/FindingsTrend";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "";
 type RecordValue = Record<string, any>;
@@ -14,41 +17,36 @@ async function request(path: string, options?: RequestInit) {
 async function json(path: string) { return (await request(path)).json(); }
 
 function Shell({ children, path, setPath }: { children: React.ReactNode; path: string; setPath: (p: string) => void }) {
-  const navItem = (href: string, label: string) => (
-    <a
-      href="#"
-      className={path === href ? "active" : ""}
-      onClick={(e) => { e.preventDefault(); setPath(href); }}
-    >
-      {label}
-    </a>
-  );
+  const [isOpen, setIsOpen] = useState(false);
+
   return (
     <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <strong>SAT-SA</strong>
-          <span>Supervisory Analytics for SOC Assessment</span>
-        </div>
-        <nav className="nav" aria-label="Primary navigation">
-          <span className="nav-section-label">Analytics</span>
-          {navItem("/", "Dashboard Overview")}
-          {navItem("/data-ingestion", "Data Ingestion")}
-          <div className="nav-divider" />
-          <span className="nav-section-label">Supervisory Views</span>
-          {navItem("/execution-gaps", "Execution Gaps")}
-          {navItem("/negative-space", "Negative Space")}
-          {navItem("/peer-comparison", "Peer Comparison")}
-          <div className="nav-divider" />
-          <span className="nav-section-label">Records</span>
-          {navItem("/audit-reports", "Audit Reports")}
-        </nav>
-      </aside>
+      <Sidebar
+        path={path}
+        setPath={setPath}
+        isOpen={isOpen}
+        onClose={() => setIsOpen(false)}
+      />
       <section className="main">
-        <header className="topbar">
-          <h1>SAT&#8209;SA &nbsp;<span style={{ fontWeight: 400, color: "var(--text-secondary)", fontSize: 13 }}>Supervisory Analytics for SOC Assessment</span></h1>
-          <div className="topbar-meta">
-            <span className="system-status"><b />System Operational</span>
+        <header className="topbar sticky top-0 z-30 bg-white border-b border-slate-200 py-3.5">
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={() => setIsOpen(true)}
+              className="p-2 -ml-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              aria-label="Open sidebar menu"
+            >
+              <Menu className="w-7 h-7" />
+            </button>
+            <div className="flex items-center gap-5">
+              <span className="text-5xl md:text-6xl lg:text-7xl font-black tracking-tight text-slate-900 leading-none">
+                SAT-SA
+              </span>
+              <span className="text-slate-300 font-light text-4xl md:text-5xl lg:text-6xl leading-none">|</span>
+              <span className="font-extrabold text-slate-800 text-xl md:text-2xl lg:text-3xl hidden md:inline leading-tight">
+                Supervisory Analytics for SOC Assessment
+              </span>
+            </div>
           </div>
         </header>
         <div className="main-scroll">
@@ -79,17 +77,28 @@ function Page({ title, subtitle, children }: { title: string; subtitle: string; 
 
 function EmptyState({ setPath }: { setPath?: (p: string) => void }) {
   return (
-    <div className="panel" style={{ textAlign: "center", padding: "60px 20px" }}>
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
-        style={{ margin: "0 auto 16px", color: "var(--text-muted)" }}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
-      </svg>
-      <h2 style={{ fontSize: "20px", fontWeight: "600", color: "var(--text-primary)", margin: "0 0 8px" }}>No Assessment Data Loaded</h2>
-      <p style={{ color: "var(--text-secondary)", marginBottom: "24px", maxWidth: "400px", margin: "0 auto 24px" }}>
-        Upload a SOC alert dataset (.csv or .json) via the Data Ingestion tab to begin supervisory analysis.
+    <div className="panel" style={{ textAlign: "center", padding: "64px 24px", maxWidth: 540, margin: "40px auto" }}>
+      <div style={{
+        width: 60, height: 60, borderRadius: 16,
+        background: "#eff6ff", color: "#2563eb",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        margin: "0 auto 18px", border: "1px solid #dbeafe"
+      }}>
+        <Database size={30} strokeWidth={2} />
+      </div>
+      <h2 style={{ fontSize: "22px", fontWeight: "700", color: "var(--text-primary)", margin: "0 0 8px" }}>
+        No Data Found
+      </h2>
+      <p style={{ color: "var(--text-secondary)", marginBottom: "28px", fontSize: "14px", lineHeight: "1.6" }}>
+        Please upload SOC records via the Data Ingestion tab to generate insights.
       </p>
       {setPath && (
-        <button className="btn-primary" onClick={() => setPath("/data-ingestion")}>
+        <button
+          type="button"
+          className="btn-primary"
+          style={{ padding: "10px 24px", fontSize: "14px", fontWeight: "600" }}
+          onClick={() => setPath("/data-ingestion")}
+        >
           Go to Data Ingestion
         </button>
       )}
@@ -98,12 +107,14 @@ function EmptyState({ setPath }: { setPath?: (p: string) => void }) {
 }
 
 function LoadState({ error, setPath }: { error: string | null; setPath?: (p: string) => void }) {
-  if (error && (error.includes("404") || error.includes("connect") || error.includes("Not Found"))) {
+  if (error) {
     return <EmptyState setPath={setPath} />;
   }
-  return error
-    ? <div className="error">{error}</div>
-    : <div className="panel">Loading local assessment data...</div>;
+  return (
+    <div className="panel" style={{ textAlign: "center", padding: "48px 20px", color: "var(--text-secondary)" }}>
+      Loading local assessment data...
+    </div>
+  );
 }
 
 function Tag({ value }: { value: string }) {
@@ -647,100 +658,7 @@ function SeverityDonut({ counts }: { counts: Record<string, number> }) {
   );
 }
 
-function FindingsTrend({ anomalies }: { anomalies: RecordValue[] }) {
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; date: string; count: number } | null>(null);
-  const grouped = anomalies.reduce<Record<string, number>>((r, item) => {
-    const date = String(item.timestamp || "").slice(0, 10);
-    if (date) r[date] = (r[date] || 0) + 1; return r;
-  }, {});
-  const points = Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).slice(-10);
-  const max = Math.max(...points.map(([, c]) => c), 1);
-  const W = 200; const H = 112; const PAD = { t: 10, r: 10, b: 20, l: 10 };
-  const cx = (i: number) => PAD.l + (i * (W - PAD.l - PAD.r)) / Math.max(points.length - 1, 1);
-  const cy = (c: number) => PAD.t + ((max - c) / max) * (H - PAD.t - PAD.b);
-  const poly = points.map(([, c], i) => `${cx(i)},${cy(c)}`).join(" ");
 
-  return (
-    <div className="trend-chart" style={{ position: "relative" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Findings trend"
-        style={{ display: "block", width: "100%", cursor: "crosshair" }}
-        onMouseLeave={() => setTooltip(null)}
-        onMouseMove={e => {
-          const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
-          const svgX = ((e.clientX - rect.left) / rect.width) * W;
-          // Find nearest data point
-          let nearest = 0;
-          let minDist = Infinity;
-          points.forEach(([, ], i) => { const d = Math.abs(cx(i) - svgX); if (d < minDist) { minDist = d; nearest = i; } });
-          if (points[nearest]) {
-            setTooltip({ x: cx(nearest), y: cy(points[nearest][1]), date: points[nearest][0], count: points[nearest][1] });
-          }
-        }}
-      >
-        {/* Grid lines */}
-        <line x1={PAD.l} y1={H - PAD.b} x2={W - PAD.r} y2={H - PAD.b} stroke="#e2e8f0" strokeWidth="1" />
-        <line x1={PAD.l} y1={PAD.t} x2={PAD.l} y2={H - PAD.b} stroke="#e2e8f0" strokeWidth="1" />
-        {[0.25, 0.5, 0.75].map(f => (
-          <line key={f} x1={PAD.l} y1={PAD.t + f * (H - PAD.t - PAD.b)}
-            x2={W - PAD.r} y2={PAD.t + f * (H - PAD.t - PAD.b)}
-            stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
-        ))}
-        {/* Area fill */}
-        <defs>
-          <linearGradient id="trend-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#2563eb" stopOpacity="0.18" />
-            <stop offset="100%" stopColor="#2563eb" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        {points.length > 1 && (
-          <polygon
-            points={`${poly} ${cx(points.length - 1)},${H - PAD.b} ${cx(0)},${H - PAD.b}`}
-            fill="url(#trend-fill)"
-          />
-        )}
-        {/* Line */}
-        <polyline points={poly} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-        {/* Data points */}
-        {points.map(([date, c], i) => (
-          <circle key={date} cx={cx(i)} cy={cy(c)} r="3.5" fill="#2563eb" stroke="#fff" strokeWidth="1.5" />
-        ))}
-        {/* Crosshair on hover */}
-        {tooltip && (
-          <>
-            <line x1={tooltip.x} y1={PAD.t} x2={tooltip.x} y2={H - PAD.b}
-              stroke="#2563eb" strokeWidth="1" strokeDasharray="4 3" opacity="0.6" />
-            <circle cx={tooltip.x} cy={tooltip.y} r="5" fill="#2563eb" stroke="#fff" strokeWidth="2" />
-          </>
-        )}
-      </svg>
-      {/* Dark floating tooltip */}
-      {tooltip && (
-        <div style={{
-          position: "absolute",
-          top: 0, left: 0,
-          transform: `translate(${Math.min(tooltip.x / 200 * 100, 68)}%, -110%)`,
-          background: "#0f172a",
-          color: "#f8fafc",
-          padding: "7px 12px",
-          borderRadius: 7,
-          fontSize: 12,
-          fontWeight: 500,
-          pointerEvents: "none",
-          whiteSpace: "nowrap",
-          boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
-          border: "1px solid rgba(255,255,255,0.08)",
-          zIndex: 10,
-        }}>
-          <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 2 }}>{tooltip.date}</div>
-          <div><span style={{ color: "#60a5fa" }}>●</span> <strong style={{ color: "#f8fafc" }}>{tooltip.count}</strong> finding{tooltip.count !== 1 ? "s" : ""}</div>
-        </div>
-      )}
-      <div className="trend-labels">
-        {points.map(([date, c]) => <span key={date}>{date.slice(5)}<b>{c}</b></span>)}
-      </div>
-    </div>
-  );
-}
 
 function AnalyticsStatistics({ dashboard, assessment }: { dashboard: RecordValue; assessment: RecordValue }) {
   const counts = ["CRITICAL","HIGH","MEDIUM","LOW"].reduce<Record<string, number>>((r, sev) => {
@@ -822,13 +740,70 @@ function AnalyticsStatistics({ dashboard, assessment }: { dashboard: RecordValue
 /* ------------------------------------------------------------------ */
 function Overview({ setPath }: { setPath: (p: string) => void }) {
   const [data, setData] = useState<RecordValue | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [empty, setEmpty] = useState(false);
+
   useEffect(() => {
-    Promise.all([json("/api/assessment"), json("/api/dashboard/summary"), json("/api/priorities")])
-      .then(([assessment, dashboard, priority]) => setData({ assessment, dashboard, priority }))
-      .catch(e => setError(e.message));
+    let isMounted = true;
+    setLoading(true);
+    setEmpty(false);
+
+    Promise.all([
+      json("/api/assessment").catch(() => null),
+      json("/api/dashboard/summary").catch(() => null),
+      json("/api/priorities").catch(() => null),
+    ])
+      .then(([assessment, dashboard, priority]) => {
+        if (!isMounted) return;
+        if (!assessment || !dashboard || !priority) {
+          setEmpty(true);
+          setData(null);
+          return;
+        }
+
+        const totalRecords = assessment.lifecycle?.records_assessed ?? 0;
+        const totalFindings = assessment.findings?.length ?? 0;
+        const totalSignals = dashboard.summary?.total_flagged_anomalies ?? 0;
+
+        if (totalRecords === 0 && totalFindings === 0 && totalSignals === 0) {
+          setEmpty(true);
+          setData(null);
+        } else {
+          setData({ assessment, dashboard, priority });
+          setEmpty(false);
+        }
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setEmpty(true);
+        setData(null);
+      })
+      .finally(() => {
+        if (isMounted) setLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
-  if (!data) return <Page title="Dashboard Overview" subtitle="Operational effectiveness based on available alert, process, and evidence records."><LoadState error={error} setPath={setPath} /></Page>;
+
+  if (loading) {
+    return (
+      <Page title="Dashboard Overview" subtitle="Operational effectiveness based on available alert, process, and evidence records.">
+        <div className="panel" style={{ textAlign: "center", padding: "48px 20px", color: "var(--text-secondary)" }}>
+          Loading supervisory assessment data...
+        </div>
+      </Page>
+    );
+  }
+
+  if (empty || !data) {
+    return (
+      <Page title="Dashboard Overview" subtitle="Operational effectiveness based on available alert, process, and evidence records.">
+        <EmptyState setPath={setPath} />
+      </Page>
+    );
+  }
   const { assessment, dashboard, priority } = data;
   overviewAnalyticsData = { assessment, dashboard };
   return (

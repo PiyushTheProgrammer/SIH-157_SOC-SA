@@ -95,7 +95,7 @@ class AnomalyReport:
 
 
 # ════════════════════════════════════════════════
-# DETECTOR 1: Speed Anomaly Detector
+# PREPROCESSING & NORMALIZATION UTILITIES
 # ════════════════════════════════════════════════
 
 # Hard thresholds (seconds) — tickets below these are suspicious
@@ -106,7 +106,202 @@ SEVERITY_SPEED_THRESHOLDS = {
     "LOW": 15,
 }
 
-SEVERITY_ENCODING = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+SEVERITY_ENCODING = {
+    "CRITICAL": 4,
+    "HIGH": 3,
+    "MEDIUM": 2,
+    "LOW": 1,
+    "4": 4,
+    "3": 3,
+    "2": 2,
+    "1": 1,
+    "0": 1,
+}
+
+
+def _prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Bullet-proof data preprocessing and normalization.
+    Ensures that ML models (Isolation Forest, TF-IDF, etc.) receive clean,
+    well-typed, and schema-compliant DataFrames regardless of CSV variations.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    # 1. Normalize column names: strip, lowercase, replace spaces/dashes with underscores
+    df.columns = [str(c).strip().lower().replace(" ", "_").replace("-", "_") for c in df.columns]
+
+    # 2. Rename Columns: time_to_close_seconds -> time_to_close
+    if "time_to_close_seconds" in df.columns and "time_to_close" not in df.columns:
+        df["time_to_close"] = df["time_to_close_seconds"]
+    elif "close_time" in df.columns and "time_to_close" not in df.columns:
+        df["time_to_close"] = df["close_time"]
+    elif "ttc" in df.columns and "time_to_close" not in df.columns:
+        df["time_to_close"] = df["ttc"]
+    elif "time_to_close" not in df.columns:
+        df["time_to_close"] = 0
+    df["time_to_close"] = pd.to_numeric(df["time_to_close"], errors="coerce").fillna(0).astype(int)
+
+    # 3. Missing Columns: time_to_acknowledge fallback (fill with 0)
+    if "time_to_acknowledge" not in df.columns:
+        if "time_to_acknowledge_seconds" in df.columns:
+            df["time_to_acknowledge"] = df["time_to_acknowledge_seconds"]
+        elif "ack_time" in df.columns:
+            df["time_to_acknowledge"] = df["ack_time"]
+        elif "tta" in df.columns:
+            df["time_to_acknowledge"] = df["tta"]
+        else:
+            df["time_to_acknowledge"] = 0
+    df["time_to_acknowledge"] = pd.to_numeric(df["time_to_acknowledge"], errors="coerce").fillna(0).astype(int)
+
+    # 4. Standardize ticket_id / alert_id / id
+    if "ticket_id" not in df.columns:
+        if "alert_id" in df.columns:
+            df["ticket_id"] = df["alert_id"].astype(str)
+        elif "id" in df.columns:
+            df["ticket_id"] = df["id"].astype(str)
+        else:
+            df["ticket_id"] = [f"TICK-{i:05d}" for i in range(len(df))]
+    else:
+        df["ticket_id"] = df["ticket_id"].astype(str)
+
+    # 5. Standardize alert_type / alert_category / category
+    if "alert_type" not in df.columns:
+        if "alert_category" in df.columns:
+            df["alert_type"] = df["alert_category"].fillna("General").astype(str)
+        elif "category" in df.columns:
+            df["alert_type"] = df["category"].fillna("General").astype(str)
+        else:
+            df["alert_type"] = "General"
+    else:
+        df["alert_type"] = df["alert_type"].fillna("General").astype(str)
+
+    # 6. Standardize assigned_analyst / entity_id / entity / analyst
+    if "assigned_analyst" not in df.columns:
+        if "entity_id" in df.columns:
+            df["assigned_analyst"] = df["entity_id"].fillna("Analyst_1").astype(str)
+        elif "entity" in df.columns:
+            df["assigned_analyst"] = df["entity"].fillna("Analyst_1").astype(str)
+        elif "analyst" in df.columns:
+            df["assigned_analyst"] = df["analyst"].fillna("Analyst_1").astype(str)
+        else:
+            df["assigned_analyst"] = "Analyst_1"
+    else:
+        df["assigned_analyst"] = df["assigned_analyst"].fillna("Analyst_1").astype(str)
+
+    # 7. Standardize dest_asset / asset_name / asset / asset_id
+    if "dest_asset" not in df.columns:
+        if "asset_name" in df.columns:
+            df["dest_asset"] = df["asset_name"].fillna("Unknown Asset").astype(str)
+        elif "asset" in df.columns:
+            df["dest_asset"] = df["asset"].fillna("Unknown Asset").astype(str)
+        elif "asset_id" in df.columns:
+            df["dest_asset"] = df["asset_id"].fillna("Unknown Asset").astype(str)
+        else:
+            df["dest_asset"] = "Unknown Asset"
+    else:
+        df["dest_asset"] = df["dest_asset"].fillna("Unknown Asset").astype(str)
+
+    # 8. Standardize resolution_notes / notes / resolution
+    if "resolution_notes" not in df.columns:
+        if "notes" in df.columns:
+            df["resolution_notes"] = df["notes"].fillna("").astype(str)
+        elif "resolution" in df.columns:
+            df["resolution_notes"] = df["resolution"].fillna("").astype(str)
+        else:
+            df["resolution_notes"] = ""
+    else:
+        df["resolution_notes"] = df["resolution_notes"].fillna("").astype(str)
+
+    # 9. Standardize timestamp / time / date
+    if "timestamp" not in df.columns:
+        if "time" in df.columns:
+            df["timestamp"] = df["time"].fillna("").astype(str)
+        elif "date" in df.columns:
+            df["timestamp"] = df["date"].fillna("").astype(str)
+        else:
+            df["timestamp"] = ""
+    else:
+        df["timestamp"] = df["timestamp"].fillna("").astype(str)
+
+    # 10. Severity Mapping: 'Critical' -> 4, 'High' -> 3, 'Medium' -> 2, 'Low' -> 1
+    if "alert_severity" not in df.columns:
+        if "severity" in df.columns:
+            df["alert_severity"] = df["severity"]
+        else:
+            df["alert_severity"] = "LOW"
+    df["alert_severity"] = df["alert_severity"].fillna("LOW").astype(str).str.strip().str.upper()
+    df["severity_num"] = df["alert_severity"].map(SEVERITY_ENCODING).fillna(1).astype(int)
+
+    # 11. Escalation Mapping: boolean or string 'True'/'False' -> escalated (bool) & escalated_num (int 1/0)
+    if "escalated" not in df.columns:
+        df["escalated"] = False
+        df["escalated_num"] = 0
+    else:
+        def _parse_bool(val: Any) -> bool:
+            if pd.isna(val) or val is None:
+                return False
+            if isinstance(val, bool):
+                return val
+            if isinstance(val, (int, float)):
+                return bool(val)
+            s = str(val).strip().lower()
+            return s in {"true", "1", "yes", "t", "y"}
+
+        df["escalated"] = df["escalated"].apply(_parse_bool)
+        df["escalated_num"] = df["escalated"].astype(int)
+
+    return df
+
+
+# Alias for backward compatibility
+_preprocess_alerts_df = _prepare_dataframe
+
+
+def _preprocess_inventory_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Standardize inventory DataFrame column names and types."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    df = df.copy()
+    df.columns = [str(c).strip().lower().replace(" ", "_").replace("-", "_") for c in df.columns]
+
+    if "asset_id" not in df.columns:
+        if "asset_name" in df.columns:
+            df["asset_id"] = df["asset_name"].astype(str)
+        elif "asset" in df.columns:
+            df["asset_id"] = df["asset"].astype(str)
+        elif "id" in df.columns:
+            df["asset_id"] = df["id"].astype(str)
+        else:
+            df["asset_id"] = [f"ASSET-{i:03d}" for i in range(len(df))]
+    else:
+        df["asset_id"] = df["asset_id"].astype(str)
+
+    if "asset_criticality" not in df.columns:
+        if "criticality" in df.columns:
+            df["asset_criticality"] = df["criticality"]
+        elif "severity" in df.columns:
+            df["asset_criticality"] = df["severity"]
+        else:
+            df["asset_criticality"] = "MEDIUM"
+    df["asset_criticality"] = df["asset_criticality"].fillna("MEDIUM").astype(str).str.strip().str.upper()
+
+    if "asset_type" not in df.columns:
+        if "type" in df.columns:
+            df["asset_type"] = df["type"]
+        else:
+            df["asset_type"] = "Server"
+    df["asset_type"] = df["asset_type"].fillna("Server").astype(str)
+
+    return df
+
+
+# ════════════════════════════════════════════════
+# DETECTOR 1: Speed Anomaly Detector
+# ════════════════════════════════════════════════
 
 
 class SpeedAnomalyDetector:
@@ -133,30 +328,36 @@ class SpeedAnomalyDetector:
 
     def detect(self, df: pd.DataFrame) -> list[SpeedAnomaly]:
         """Run detection on the alerts DataFrame. Returns flagged tickets."""
-        # Build feature matrix
-        df = df.copy()
-        df["severity_num"] = df["alert_severity"].map(SEVERITY_ENCODING)
-        df["escalated_num"] = df["escalated"].map(
-            {True: 1, False: 0, "True": 1, "False": 0}
-        ).fillna(0).astype(int)
+        if df is None or df.empty:
+            return []
+
+        # Robust feature extraction and column normalization
+        df = _preprocess_alerts_df(df)
 
         features = df[["severity_num", "time_to_close", "time_to_acknowledge", "escalated_num"]].values
 
+        if len(features) == 0:
+            return []
+
         # Fit the model and get anomaly scores (lower = more anomalous)
-        self.model.fit(features)
-        df["anomaly_score"] = self.model.decision_function(features)
+        try:
+            self.model.fit(features)
+            df["anomaly_score"] = self.model.decision_function(features)
+        except Exception:
+            # Fallback if IsolationForest fails (e.g. edge cases)
+            df["anomaly_score"] = 0.0
 
         # Primary detection: rule-based severity threshold filter
         # Secondary signal: Isolation Forest anomaly score for ranking
         flagged: list[SpeedAnomaly] = []
         for _, row in df.iterrows():
-            sev = row["alert_severity"]
+            sev = str(row["alert_severity"]).upper()
             ttc = int(row["time_to_close"])
             threshold = SEVERITY_SPEED_THRESHOLDS.get(sev, 15)
 
             # Rule-based gate: must be CRITICAL/HIGH AND below time threshold
             if ttc < threshold and sev in ("CRITICAL", "HIGH"):
-                score = float(row["anomaly_score"])
+                score = float(row.get("anomaly_score", 0.0))
                 escalated = bool(row["escalated"])
                 esc_note = " without escalation" if not escalated else " (was escalated)"
                 explanation = (
@@ -168,20 +369,20 @@ class SpeedAnomalyDetector:
                 )
                 flagged.append(
                     SpeedAnomaly(
-                        ticket_id=row["ticket_id"],
+                        ticket_id=str(row["ticket_id"]),
                         severity=sev,
                         time_to_close=ttc,
                         time_to_acknowledge=int(row["time_to_acknowledge"]),
                         escalated=escalated,
-                        analyst=row["assigned_analyst"],
-                        alert_type=row["alert_type"],
-                        dest_asset=row["dest_asset"],
+                        analyst=str(row["assigned_analyst"]),
+                        alert_type=str(row["alert_type"]),
+                        dest_asset=str(row["dest_asset"]),
                         timestamp=str(row["timestamp"]),
                         explanation=explanation,
                     )
                 )
 
-        # Sort by anomaly score (most anomalous first — lowest score)
+        # Sort by anomaly score (most anomalous first — lowest time to close)
         flagged.sort(key=lambda a: a.time_to_close)
         return flagged
 
@@ -211,6 +412,10 @@ class RepetitiveNotesDetector:
 
     def detect(self, df: pd.DataFrame) -> list[RepetitiveNoteCluster]:
         """Run detection. Returns flagged clusters."""
+        if df is None or df.empty:
+            return []
+
+        df = _preprocess_alerts_df(df)
         flagged: list[RepetitiveNoteCluster] = []
 
         for analyst, group in df.groupby("assigned_analyst"):
@@ -223,7 +428,8 @@ class RepetitiveNotesDetector:
                 unique_types = cluster_df["alert_type"].unique().tolist()
 
                 if len(cluster_indices) >= self.min_cluster and len(unique_types) >= self.min_types:
-                    note_snippet = cluster_df["resolution_notes"].iloc[0][:120]
+                    raw_snippet = cluster_df["resolution_notes"].iloc[0] if not cluster_df["resolution_notes"].empty else ""
+                    note_snippet = str(raw_snippet)[:120]
                     explanation = (
                         f"Analyst {analyst} used near-identical resolution notes across "
                         f"{len(cluster_indices)} tickets spanning {len(unique_types)} "
@@ -234,7 +440,7 @@ class RepetitiveNotesDetector:
                         RepetitiveNoteCluster(
                             analyst=str(analyst),
                             repeated_note_snippet=note_snippet,
-                            ticket_ids=cluster_df["ticket_id"].tolist(),
+                            ticket_ids=[str(t) for t in cluster_df["ticket_id"].tolist()],
                             distinct_alert_types=unique_types,
                             ticket_count=len(cluster_indices),
                             explanation=explanation,
@@ -298,7 +504,7 @@ class RepetitiveNotesDetector:
                     used.add(j)
             if len(cluster) >= self.min_cluster:
                 clusters.append(cluster)
-            used.add(i)
+                used.add(i)
 
         return clusters
 
@@ -329,11 +535,16 @@ class BlindSpotDetector:
         inventory_df: pd.DataFrame,
     ) -> list[BlindSpot]:
         """Run detection. Returns flagged assets."""
+        if alerts_df is None or inventory_df is None or inventory_df.empty:
+            return []
+
+        alerts = _preprocess_alerts_df(alerts_df)
+        inv = _preprocess_inventory_df(inventory_df)
+
         # Count alerts per asset
-        alert_counts = alerts_df["dest_asset"].value_counts().to_dict()
+        alert_counts = alerts["dest_asset"].value_counts().to_dict()
 
         # Merge counts into inventory
-        inv = inventory_df.copy()
         inv["actual_alerts"] = inv["asset_id"].map(alert_counts).fillna(0).astype(int)
 
         # Compute group statistics
@@ -341,11 +552,11 @@ class BlindSpotDetector:
 
         flagged: list[BlindSpot] = []
         for _, row in inv.iterrows():
-            crit = row["asset_criticality"]
+            crit = str(row["asset_criticality"]).upper()
             actual = int(row["actual_alerts"])
             stats = group_stats.get(crit, {"mean": 0, "std": 0})
-            mean_val = float(stats["mean"])
-            std_val = float(stats["std"])
+            mean_val = float(stats.get("mean", 0) if pd.notna(stats.get("mean")) else 0)
+            std_val = float(stats.get("std", 0) if pd.notna(stats.get("std")) else 0)
 
             # Only flag HIGH and CRITICAL assets
             if crit not in ("CRITICAL", "HIGH"):
@@ -362,9 +573,9 @@ class BlindSpotDetector:
                 )
                 flagged.append(
                     BlindSpot(
-                        asset_id=row["asset_id"],
+                        asset_id=str(row["asset_id"]),
                         criticality=crit,
-                        asset_type=row["asset_type"],
+                        asset_type=str(row["asset_type"]),
                         actual_alerts=actual,
                         expected_mean=round(mean_val, 2),
                         expected_std=round(std_val, 2),
@@ -382,9 +593,9 @@ class BlindSpotDetector:
                 )
                 flagged.append(
                     BlindSpot(
-                        asset_id=row["asset_id"],
+                        asset_id=str(row["asset_id"]),
                         criticality=crit,
-                        asset_type=row["asset_type"],
+                        asset_type=str(row["asset_type"]),
                         actual_alerts=actual,
                         expected_mean=round(mean_val, 2),
                         expected_std=round(std_val, 2),
