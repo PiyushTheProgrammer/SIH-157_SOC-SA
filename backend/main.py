@@ -270,7 +270,7 @@ _EXPLAIN_PROMPT = ChatPromptTemplate.from_messages([
 ])
 
 
-def _build_llm_chain():
+def _build_llm_chain(timeout: float = 5.0):
     """Build the LangChain chain. Returns None if Ollama is unavailable."""
     if not LANGCHAIN_AVAILABLE:
         return None
@@ -286,6 +286,74 @@ def _build_llm_chain():
     except Exception as exc:
         logger.warning("Could not build LangChain chain: %s", exc)
         return None
+
+
+async def generate_llm_rationale(
+    payload: dict[str, Any],
+    fallback_text: Optional[str] = None,
+    timeout: float = 5.0,
+) -> tuple[str, str]:
+    """
+    Execute generation request against local Ollama API with strict timeout
+    and graceful offline/error fallback.
+
+    Returns:
+        tuple[str, str]: (rationale_text, source)
+    """
+    default_fallback = (
+        fallback_text
+        if fallback_text and fallback_text.strip()
+        else "AI rationale generation bypassed: Local LLM engine is currently unreachable. Anomaly flagged by statistical engine."
+    )
+
+    try:
+        chain = _build_llm_chain(timeout=timeout)
+        if chain is None:
+            logger.warning("Local LLM engine unavailable. Bypassing AI rationale generation.")
+            return (
+                default_fallback,
+                "rule_engine" if fallback_text else "fallback",
+            )
+
+        # Ensure all template variables have safe defaults
+        full_payload = {
+            "anomaly_type": str(payload.get("anomaly_type") or "anomaly"),
+            "ticket_id": str(payload.get("ticket_id") or "N/A"),
+            "severity": str(payload.get("severity") or "N/A"),
+            "time_to_close": str(payload.get("time_to_close") or "N/A"),
+            "analyst": str(payload.get("analyst") or "N/A"),
+            "alert_type": str(payload.get("alert_type") or "N/A"),
+            "escalated": str(payload.get("escalated") if payload.get("escalated") is not None else "N/A"),
+            "asset_id": str(payload.get("asset_id") or "N/A"),
+            "actual_alerts": str(payload.get("actual_alerts") if payload.get("actual_alerts") is not None else "N/A"),
+            "expected_mean": str(payload.get("expected_mean") if payload.get("expected_mean") is not None else "N/A"),
+            "explanation": str(payload.get("explanation") or "Statistical anomaly flagged."),
+        }
+
+        # Enforce strict 5.0 second timeout to avoid pipeline blocking or 500 timeouts
+        result: str = await asyncio.wait_for(chain.ainvoke(full_payload), timeout=timeout)
+        cleaned = result.strip() if result else default_fallback
+        return (cleaned, "ollama")
+
+    except asyncio.TimeoutError as te:
+        logger.warning(
+            "Local LLM rationale generation timed out after %.1fs (%s). Returning fallback rationale.",
+            timeout,
+            te,
+        )
+        return (
+            "AI rationale generation bypassed: Local LLM engine is currently unreachable. Anomaly flagged by statistical engine.",
+            "fallback",
+        )
+    except Exception as exc:
+        logger.warning(
+            "Local LLM API error during rationale generation (%s). Returning fallback rationale.",
+            exc,
+        )
+        return (
+            "AI rationale generation bypassed: Local LLM engine is currently unreachable. Anomaly flagged by statistical engine.",
+            "fallback",
+        )
 
 
 # ══════════════════════════════════════════════════
@@ -645,19 +713,9 @@ async def export_report(request: ReportExportRequest):
 async def explain_anomaly(request: AnomalyExplainRequest):
     """
     Uses LangChain + local Ollama to generate a professional audit explanation.
-    Falls back to the rule-engine explanation if Ollama is not running.
+    Falls back gracefully if Ollama is offline, unreachable, or times out.
     All inference is 100% local — no external API calls.
     """
-    chain = _build_llm_chain()
-
-    if chain is None:
-        # Graceful fallback — return rule-engine text
-        return AnomalyExplainResponse(
-            explanation=request.explanation,
-            source="rule_engine",
-            model=None,
-        )
-
     payload = {
         "anomaly_type":  request.anomaly_type,
         "ticket_id":     request.ticket_id     or "N/A",
@@ -672,18 +730,14 @@ async def explain_anomaly(request: AnomalyExplainRequest):
         "explanation":   request.explanation,
     }
 
-    try:
-        # ainvoke is async — FastAPI won't block while Ollama generates
-        result: str = await chain.ainvoke(payload)
-        return AnomalyExplainResponse(
-            explanation=result.strip(),
-            source="ollama",
-            model=OLLAMA_MODEL,
-        )
-    except Exception as exc:
-        logger.warning("Ollama inference failed (%s). Falling back to rule engine.", exc)
-        return AnomalyExplainResponse(
-            explanation=request.explanation,
-            source="rule_engine",
-            model=None,
-        )
+    explanation, source = await generate_llm_rationale(
+        payload=payload,
+        fallback_text=request.explanation,
+        timeout=5.0,
+    )
+
+    return AnomalyExplainResponse(
+        explanation=explanation,
+        source=source,
+        model=OLLAMA_MODEL if source == "ollama" else None,
+    )

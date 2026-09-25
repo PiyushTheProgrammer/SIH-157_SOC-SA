@@ -27,7 +27,11 @@ load_dotenv()
 
 # ── Connection Parameters ───────────────────────────────────────────────────
 DATABASE_USER = os.getenv("DATABASE_USER", "postgres")
-DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD", "Admin@123")
+DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD")
+
+if DATABASE_PASSWORD is None:
+    raise ValueError("DATABASE_PASSWORD environment variable is missing.")
+
 DATABASE_HOST = os.getenv("DATABASE_HOST", "localhost")
 DATABASE_PORT = int(os.getenv("DATABASE_PORT", "5432"))
 DATABASE_NAME = os.getenv("DATABASE_NAME", "sat_sa_db")
