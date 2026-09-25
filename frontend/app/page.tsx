@@ -46,9 +46,9 @@ function Shell({ children, path, setPath }: { children: React.ReactNode; path: s
               <Image
                 src="/SAT-SA.png"
                 alt="SAT-SA Logo"
-                width={26}
-                height={26}
-                className="w-6 h-6 object-contain"
+                width={36}
+                height={36}
+                className="w-9 h-9 object-contain"
                 priority
               />
               <span className="text-xl font-extrabold tracking-tight text-slate-800 leading-none">
