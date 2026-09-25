@@ -113,26 +113,130 @@ function Tag({ value }: { value: string }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Upload Progress Bar Component                                        */
+/* ------------------------------------------------------------------ */
+const UPLOAD_STAGES = [
+  { label: "Uploading Data",                      from: 0,  to: 25  },
+  { label: "Running Scikit-Learn Anomaly Detection", from: 25, to: 60  },
+  { label: "Generating Local LLM Rationales",     from: 60, to: 90  },
+  { label: "Finalizing Audit Records",            from: 90, to: 100 },
+] as const;
+
+function UploadProgressBar({ progress }: { progress: number }) {
+  const pct = Math.min(100, Math.max(0, progress));
+  const stageIdx = UPLOAD_STAGES.findIndex(s => pct < s.to) === -1
+    ? UPLOAD_STAGES.length - 1
+    : UPLOAD_STAGES.findIndex(s => pct < s.to);
+  const currentLabel = pct >= 100 ? "Complete!" : UPLOAD_STAGES[stageIdx].label;
+
+  return (
+    <div className="upload-progress-wrap" aria-live="polite" aria-label={`Upload progress: ${pct}%`}>
+      <div className="upload-progress-header">
+        <span className="upload-progress-stage">{currentLabel}</span>
+        <span className="upload-progress-pct">{pct}%</span>
+      </div>
+      <div className="upload-progress-track">
+        <div className="upload-progress-fill" style={{ width: `${pct}%` }} />
+      </div>
+      <div className="upload-progress-steps">
+        {UPLOAD_STAGES.map((stage, i) => {
+          const isDone = pct >= stage.to;
+          const isActive = !isDone && pct >= stage.from;
+          return (
+            <div
+              key={stage.label}
+              className={`upload-progress-step${isDone ? " done" : isActive ? " active" : ""}`}
+              title={stage.label}
+            >
+              {isDone ? "✓ " : isActive ? "⟳ " : ""}{stage.label}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Data Ingestion – single, centralised upload location                */
 /* ------------------------------------------------------------------ */
-function DataIngestion() {
+function DataIngestion({ setPath }: { setPath: (p: string) => void }) {
   const [file, setFile] = useState<File | null>(null);
-  const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
   async function handleUpload(targetFile: File) {
-    setFile(targetFile); setMessage(""); setError(""); setUploading(true);
+    setFile(targetFile);
+    setError("");
+    setUploading(true);
+    setProgress(0);
+
+    // ── Stage 1: Uploading Data (0 → 25) ─────────────────────────────
+    const advanceTo = (target: number, duration: number) =>
+      new Promise<void>(resolve => {
+        const start = Date.now();
+        const startPct = progress ?? 0;
+        function tick() {
+          const elapsed = Date.now() - start;
+          const fraction = Math.min(elapsed / duration, 1);
+          const current = Math.round(startPct + (target - startPct) * fraction);
+          setProgress(current);
+          if (fraction < 1) requestAnimationFrame(tick);
+          else resolve();
+        }
+        tick();
+      });
+
+    let currentPct = 0;
+    const animate = async (target: number, duration: number) => {
+      const start = Date.now();
+      const from = currentPct;
+      await new Promise<void>(resolve => {
+        function tick() {
+          const elapsed = Date.now() - start;
+          const fraction = Math.min(elapsed / duration, 1);
+          currentPct = Math.round(from + (target - from) * fraction);
+          setProgress(currentPct);
+          if (fraction < 1) requestAnimationFrame(tick);
+          else resolve();
+        }
+        tick();
+      });
+    };
+
     try {
+      // Fire actual upload while stage 1 animation plays
       const form = new FormData();
       form.append("file", targetFile);
-      const response = await request("/api/upload", { method: "POST", body: form });
-      const result = await response.json();
-      setMessage(result.message ?? "Dataset uploaded and processed successfully.");
+
+      const uploadPromise = request("/api/upload", { method: "POST", body: form });
+
+      // Stage 1: 0 → 25 (network upload)
+      await animate(25, 900);
+
+      // Stage 2: 25 → 60 (wait for backend + animate)
+      await animate(60, 1400);
+
+      // Stage 3: 60 → 90 (LLM rationale simulation)
+      await animate(90, 1200);
+
+      // Await actual API response before finalizing
+      await uploadPromise;
+
+      // Stage 4: 90 → 100 (finalize)
+      await animate(100, 600);
+
+      // Brief pause at 100% then navigate
+      await new Promise(r => setTimeout(r, 800));
+      setPath("/");
     } catch (err: any) {
+      setProgress(null);
       setError(err.message || "Unable to connect to the local assessment API.");
-    } finally { setUploading(false); }
+    } finally {
+      setUploading(false);
+    }
   }
 
   function onFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -170,9 +274,11 @@ function DataIngestion() {
             border: `2px dashed ${dragOver ? "var(--accent)" : "#cbd5e1"}`,
             borderRadius: 12,
             background: dragOver ? "var(--accent-dim)" : "#f8fafc",
-            cursor: "pointer",
+            cursor: uploading ? "not-allowed" : "pointer",
             transition: "border-color 0.2s, background 0.2s",
             textAlign: "center",
+            opacity: uploading ? 0.6 : 1,
+            pointerEvents: uploading ? "none" : undefined,
           }}
         >
           <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
@@ -194,11 +300,13 @@ function DataIngestion() {
             ? <span className="file-badge">&#128196; {file.name} <span style={{ color: "var(--text-secondary)" }}>({(file.size / 1024).toFixed(1)} KB)</span></span>
             : <span className="file-badge" style={{ color: "var(--text-muted)" }}>No file selected</span>}
           <button className="btn-primary" onClick={() => file && handleUpload(file)} disabled={!file || uploading}>
-            {uploading ? "Uploading…" : "Submit for Analysis"}
+            {uploading ? "Processing…" : "Submit for Analysis"}
           </button>
         </div>
 
-        {message && <div className="notice" style={{ marginTop: 16 }}>{message}</div>}
+        {/* Real-time progress bar — shown during upload */}
+        {progress !== null && <UploadProgressBar progress={progress} />}
+
         {error && <div className="error" style={{ marginTop: 16 }}>{error}</div>}
       </section>
 
@@ -914,7 +1022,7 @@ export default function App() {
   const [path, setPath] = useState("/");
 
   const page =
-    path === "/data-ingestion"  ? <DataIngestion /> :
+    path === "/data-ingestion"  ? <DataIngestion setPath={setPath} /> :
     path === "/execution-gaps"  ? <ExecutionGaps setPath={setPath} /> :
     path === "/negative-space"  ? <NegativeSpace setPath={setPath} /> :
     path === "/peer-comparison" ? <PeerComparison setPath={setPath} /> :

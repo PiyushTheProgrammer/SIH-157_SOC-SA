@@ -41,6 +41,12 @@ from supervisory_assessment import build_assessment
 from priority_engine import generate_priority_queue
 from report_generator import build_report, render_report
 
+# ── Database (SQLite via SQLAlchemy — air-gap safe) ──────────────────────────
+from database import get_db, init_db
+from models import SocAlertRecord
+from sqlalchemy.orm import Session
+from fastapi import Depends
+
 # ── LangChain (local only — no cloud imports) ──
 try:
     from langchain_ollama import ChatOllama
@@ -133,6 +139,11 @@ async def _refresh_cache(alerts_path: Path, inv_path: Path) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Pre-compute the anomaly report if CSV data already exists."""
+    # ── Initialise SQLite schema (idempotent — CREATE TABLE IF NOT EXISTS) ────
+    logger.info("Startup: initialising local SQLite database ...")
+    init_db()
+    logger.info("Startup: SQLite schema ready at sat_sa_records.db")
+
     if ALERTS_CSV.exists() and INV_CSV.exists():
         logger.info("Startup: pre-computing anomaly report ...")
         await _refresh_cache(ALERTS_CSV, INV_CSV)
@@ -294,10 +305,14 @@ async def health_check():
 
 
 @app.post("/api/upload", summary="Upload case evidence and trigger analysis for CSV files")
-async def upload_csv(file: UploadFile = File(...)):
+async def upload_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
     """
-    Accept supported case evidence. CSV uploads replace the alert dataset and
-    refresh analytics; other supported formats are stored for case review.
+    Accept supported case evidence. CSV uploads replace the alert dataset,
+    bulk-insert all rows into the local SQLite database, and refresh analytics;
+    other supported formats are stored for case review.
     """
     filename = file.filename or "case-file"
     extension = Path(filename).suffix.lower()
@@ -328,6 +343,56 @@ async def upload_csv(file: UploadFile = File(...)):
 
     logger.info("Uploaded CSV saved to %s (%d bytes)", dest, dest.stat().st_size)
 
+    # ── Bulk-insert CSV rows into SQLite ─────────────────────────────────────
+    try:
+        df = pd.read_csv(dest)
+
+        # Normalise column names: strip whitespace and lower-case
+        df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
+
+        # Map common boolean representations to Python bool
+        def _to_bool(val) -> bool | None:
+            if isinstance(val, bool):
+                return val
+            if isinstance(val, (int, float)):
+                return bool(val)
+            if isinstance(val, str):
+                return val.strip().lower() in {"true", "1", "yes"}
+            return None
+
+        records: list[SocAlertRecord] = []
+        for _, row in df.iterrows():
+            records.append(
+                SocAlertRecord(
+                    alert_id=str(row.get("alert_id", "")) or None,
+                    entity_id=str(row.get("entity_id", "")) or None,
+                    asset_name=str(row.get("asset_name", "")) or None,
+                    alert_category=str(row.get("alert_category", "")) or None,
+                    alert_severity=str(row.get("alert_severity", "")) or None,
+                    time_to_close_seconds=(
+                        int(row["time_to_close_seconds"])
+                        if pd.notna(row.get("time_to_close_seconds"))
+                        else None
+                    ),
+                    escalated=_to_bool(row.get("escalated")),
+                    resolution_notes=str(row.get("resolution_notes", "")) or None,
+                    is_anomaly=False,  # updated later by the analytics engine
+                )
+            )
+
+        # Clear previous upload before inserting the new batch
+        db.query(SocAlertRecord).delete()
+        db.bulk_save_objects(records)
+        db.commit()
+        logger.info(
+            "SQLite: inserted %d SOC alert records into soc_alert_records table.",
+            len(records),
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.error("SQLite bulk-insert failed: %s", exc)
+        # Non-fatal: log the error but continue so the analytics engine still runs
+
     if not INV_CSV.exists():
         raise HTTPException(
             status_code=422,
@@ -338,15 +403,17 @@ async def upload_csv(file: UploadFile = File(...)):
             ),
         )
 
-    # Re-run engine in background — client gets immediate response
+    # Re-run analytics engine in background — client gets immediate response
     asyncio.create_task(_refresh_cache(dest, INV_CSV))
 
     return {
         "status": "accepted",
-        "message": "File saved. Analytics engine is running in the background. "
+        "message": "File saved and records stored in local database. "
+                   "Analytics engine is running in the background. "
                    "The dashboard will refresh automatically.",
         "filename": filename,
         "saved_to": str(dest),
+        "records_inserted": len(records) if "records" in dir() else 0,
     }
 
 

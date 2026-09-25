@@ -1,42 +1,28 @@
-# SIH-157_SOC-SA: SOC Situational Awareness Dashboard
+# SAT-SA: Supervisory Analytics Tool for SOC Assessment (SIH-26157)
 
 ## 📌 Problem Statement
-Modern Security Operations Centers (SOCs) are overwhelmed with a high volume of security alerts, making it difficult to prioritize threats, identify blind spots, and respond to critical incidents in real-time. Analysts suffer from alert fatigue and lack a unified, intuitive view of the organization's security posture.
+The National Critical Information Infrastructure Protection Centre (NCIIPC) manually reviews security alerts and case-management records from Critical Sector Entities (CSEs) to assess their cyber resilience. Manual review is highly resource-intensive and struggles to scale. NCIIPC requires a fully offline, air-gapped analytics tool to automatically ingest SOC data, identify execution gaps (poor operational quality), and detect negative space (missing monitoring telemetry).
 
 ## 💡 Solution
-The **SOC Situational Awareness (SA) Dashboard** provides a centralized, real-time visualization platform that aggregates security alerts, analyzes risks, and highlights anomalies. By leveraging data analytics and intuitive visualizations, it empowers security analysts to quickly identify critical threats, understand their context, and take decisive action, thereby reducing response times and improving overall security posture.
+**SAT-SA** is a secure, localized dashboard that ingests periodic SOC exports (CSV/JSON). It uses offline machine learning (Isolation Forests) to flag suspicious operational patterns and local LLMs to generate human-readable rationales. It prioritizes the highest-value records for supervisory review without relying on external cloud APIs, ensuring 100% data sovereignty.
 
 ## 🏗️ Architecture
-The project follows a modern client-server architecture:
+- **Frontend:** Next.js (React) with Tailwind CSS. Provides a clean, dark/light-mode dashboard optimized for long supervisory sessions.
+- **Backend:** Python (FastAPI). High-performance asynchronous API handling data parsing and analytics.
+- **Database:** Local SQLite / PostgreSQL (via SQLAlchemy) for offline, immutable storage of alerts, entities, and audit reports.
+- **Analytics Engine:** Scikit-Learn (Isolation Forest) for anomaly detection and Ollama (Local Llama) for zero-network explainability.
 
-- **Frontend:** Built with Next.js and React. Provides an interactive, dynamic user interface with specialized visualization components (e.g., Risk Score Badges, Anomaly Tables, Blind Spot Charts, and Scatter Plots).
-- **Backend:** Built with Python (FastAPI). Acts as the analytics engine, processing raw SOC alerts, computing risk scores, and serving data to the frontend via RESTful APIs.
-- **Data Source:** Ingests SOC alert data and asset inventory to drive analytics.
-
-## 🔄 Flow of Data
-1. **Data Ingestion:** The backend ingests security alerts and asset inventory data.
-2. **Processing & Analytics:** The analytics engine processes the raw data, identifies anomalies, calculates risk scores based on asset criticality and threat severity, and detects potential blind spots.
-3. **API Delivery:** The processed insights are exposed through backend API endpoints.
-4. **Visualization:** The Next.js frontend fetches the data from the backend APIs and renders it in real-time using interactive charts, tables, and metrics bars.
-
-## 🚀 Getting Started
+## 🚀 Setup & Installation Instructions
 
 ### Prerequisites
 - Node.js (v18+)
-- Python (3.8+)
+- Python (3.10+)
+- Local Ollama installed (for AI Explainability)
 
-### Backend Setup
-1. Navigate to the backend directory: `cd backend`
-2. Install dependencies: `pip install -r requirements.txt`
-3. Run the backend server: `uvicorn main:app --reload --port 8000`
-
-### Frontend Setup
-1. Navigate to the frontend directory: `cd frontend`
-2. Install dependencies: `npm install`
-3. Run the development server: `npm run dev`
-
-## 🛡️ Key Features
-- **Real-time Metrics:** Overview of critical alerts and system health.
-- **Risk Scoring:** Automated risk calculation for prioritized response.
-- **Anomaly Detection:** Identification of unusual patterns in network traffic or user behavior.
-- **Blind Spot Analysis:** Visualizing unmonitored or vulnerable assets.
+### 1. Backend Setup
+Navigate to the backend directory and set up the Python environment:
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate  # On Windows use: venv\Scripts\activate
+pip install -r requirements.txt
