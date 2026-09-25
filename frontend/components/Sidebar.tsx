@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Image from "next/image";
 import { X } from "lucide-react";
 
 interface SidebarProps {
@@ -57,9 +58,13 @@ export function Sidebar({ path, setPath, isOpen, onClose }: SidebarProps) {
         {/* Drawer Header with Close Icon */}
         <div className="p-4 border-b border-white/15 flex items-center justify-between flex-shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-white/20 border border-white/30 flex items-center justify-center text-white font-bold text-sm shadow-xs">
-              SA
-            </div>
+            <Image
+              src="/SAT-SA.png"
+              alt="SAT-SA Logo"
+              width={32}
+              height={32}
+              className="w-8 h-8 object-contain rounded-md bg-white/10 p-0.5"
+            />
             <span className="text-white font-bold text-base tracking-tight">SAT-SA</span>
           </div>
           <button

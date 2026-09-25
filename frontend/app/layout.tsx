@@ -4,6 +4,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "SAT-SA | SOC Supervisory Analytics Tool",
   description: "Prototype supervisory analytics for SOC assessment using synthetic operational evidence.",
+  icons: {
+    icon: "/SAT-SA.png",
+  },
 };
 
 export default function RootLayout({

@@ -3,6 +3,7 @@
 export const dynamic = 'force-dynamic';
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Database, Menu } from "lucide-react";
 import { Sidebar } from "../components/Sidebar";
@@ -42,6 +43,14 @@ function Shell({ children, path, setPath }: { children: React.ReactNode; path: s
               <Menu className="w-5 h-5" />
             </button>
             <div className="flex items-center gap-2.5">
+              <Image
+                src="/SAT-SA.png"
+                alt="SAT-SA Logo"
+                width={26}
+                height={26}
+                className="w-6 h-6 object-contain"
+                priority
+              />
               <span className="text-xl font-extrabold tracking-tight text-slate-800 leading-none">
                 SAT-SA
               </span>
