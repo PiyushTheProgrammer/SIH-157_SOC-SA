@@ -1,22 +1,46 @@
 """
 SAT-SA — database.py
 =====================
-Configures a local SQLite database via SQLAlchemy.
-The DB file (sat_sa_records.db) lives in the backend/ directory.
+Configures the local PostgreSQL database via SQLAlchemy.
 
-Air-gap compliant: SQLite is bundled with Python — zero external calls.
+Air-gap compliant: PostgreSQL runs on-premises — zero external calls.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ HOW TO SET YOUR PASSWORD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Replace the placeholder below with your real credentials:
+   DATABASE_PASSWORD = "your_actual_password_here"
+   DATABASE_USER     = "postgres"          # or your PG user
+   DATABASE_HOST     = "localhost"
+   DATABASE_PORT     = 5432
+   DATABASE_NAME     = "sat_sa_db"         # must already exist in PG
+
+ Then run once in psql to create the database if needed:
+   CREATE DATABASE sat_sa_db;
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
-from sqlalchemy import create_engine
+import os
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
-# ── Database URL ──────────────────────────────────────────────────────────────
-# Relative path keeps the DB file next to main.py regardless of CWD.
-SQLALCHEMY_DATABASE_URL = "sqlite:///./sat_sa_records.db"
+# ── Connection parameters — edit here or provide via environment variables ──
+DATABASE_USER     = os.getenv("DATABASE_USER", "postgres")
+DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD", "YOUR_PASSWORD_HERE")  # <── REPLACE THIS
+DATABASE_HOST     = os.getenv("DATABASE_HOST", "localhost")
+DATABASE_PORT     = int(os.getenv("DATABASE_PORT", "5432"))
+DATABASE_NAME     = os.getenv("DATABASE_NAME", "sat_sa_db")
+
+SQLALCHEMY_DATABASE_URL = (
+    f"postgresql://{DATABASE_USER}:{DATABASE_PASSWORD}"
+    f"@{DATABASE_HOST}:{DATABASE_PORT}/{DATABASE_NAME}"
+)
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},  # Required for SQLite + FastAPI
+    pool_pre_ping=True,        # verifies connections before use
+    pool_size=5,
+    max_overflow=10,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -36,12 +60,12 @@ def get_db():
         db.close()
 
 
-# ── Create all tables defined in models that import this Base ─────────────────
+# ── Create all tables (idempotent — safe to call multiple times) ───────────────
 def init_db() -> None:
     """
-    Import all model modules so that SQLAlchemy registers their metadata,
+    Import all model modules so SQLAlchemy registers their metadata,
     then issue CREATE TABLE … IF NOT EXISTS for every registered table.
-    Call this once at application startup (via the FastAPI lifespan hook).
+    Call once at application startup via the FastAPI lifespan hook.
     """
-    import models  # noqa: F401 — side-effect import registers the ORM mappings
+    import models  # noqa: F401 — side-effect import registers ORM mappings
     Base.metadata.create_all(bind=engine)

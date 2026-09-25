@@ -10,3 +10,5 @@ aiofiles>=23.2.1
 langchain-core>=0.2.0
 langchain-ollama>=0.1.0
 reportlab>=4.0.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9

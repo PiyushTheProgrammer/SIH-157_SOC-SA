@@ -3,7 +3,7 @@ SAT-SA — models.py
 ====================
 SQLAlchemy ORM model representing a single SOC alert record.
 
-Air-gap compliant: SQLite is bundled with Python — zero external calls.
+Air-gap compliant: PostgreSQL runs on-premises — zero external calls.
 """
 
 from sqlalchemy import Boolean, Column, Integer, String, Text
@@ -13,7 +13,7 @@ from database import Base
 
 class SocAlertRecord(Base):
     """
-    Represents one row of uploaded SOC alert data stored in the local SQLite DB.
+    Represents one row of uploaded SOC alert data stored in PostgreSQL.
 
     All fields match the expected CSV schema documented in the Data Ingestion
     format reference table.

@@ -569,27 +569,73 @@ function AuditReports() {
 /* Charts                                                               */
 /* ------------------------------------------------------------------ */
 function SeverityDonut({ counts }: { counts: Record<string, number> }) {
+  const [hovered, setHovered] = useState<string | null>(null);
   const total = Object.values(counts).reduce((s, v) => s + v, 0);
-  const radius = 42; const circ = 2 * Math.PI * radius; let off = 0;
-  const colors: Record<string, string> = { CRITICAL: "#f85149", HIGH: "#1f6feb", MEDIUM: "#e3b341", LOW: "#3fb950" };
+  const radius = 42;
+  const circ = 2 * Math.PI * radius;
+  const colors: Record<string, string> = { CRITICAL: "#f85149", HIGH: "#3b82f6", MEDIUM: "#e3b341", LOW: "#3fb950" };
+
+  // Build arc data first so we can render hovered slice last (on top)
+  let off = 0;
+  const arcs = ["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(sev => {
+    const len = total ? (counts[sev] / total) * circ : 0;
+    const arc = { sev, len, off, color: colors[sev] };
+    off += len;
+    return arc;
+  });
+  const sorted = [
+    ...arcs.filter(a => a.sev !== hovered),
+    ...arcs.filter(a => a.sev === hovered),
+  ];
+
   return (
     <div className="donut-wrap">
       <div className="donut-chart">
-        <svg viewBox="0 0 112 112" role="img" aria-label={`Findings by severity, ${total} total`}>
-          <circle cx="56" cy="56" r={radius} fill="none" stroke="#21262d" strokeWidth="14" />
-          {["CRITICAL","HIGH","MEDIUM","LOW"].map(sev => {
-            const len = total ? (counts[sev] / total) * circ : 0;
-            const seg = <circle key={sev} cx="56" cy="56" r={radius} fill="none" stroke={colors[sev]}
-              strokeWidth="14" strokeDasharray={`${len} ${circ - len}`} strokeDashoffset={-off} transform="rotate(-90 56 56)" />;
-            off += len; return seg;
+        <svg viewBox="0 0 112 112" role="img" aria-label={`Findings by severity, ${total} total`}
+          style={{ overflow: "visible" }}>
+          {/* Background track */}
+          <circle cx="56" cy="56" r={radius} fill="none" stroke="#e2e8f0" strokeWidth="14" />
+          {sorted.map(({ sev, len, off: arcOff, color }) => {
+            const isHov = hovered === sev;
+            return (
+              <circle
+                key={sev}
+                cx="56" cy="56" r={isHov ? 44 : radius}
+                fill="none"
+                stroke={color}
+                strokeWidth={isHov ? 16 : 14}
+                strokeDasharray={`${isHov ? len * (44 / radius) : len} ${circ}`}
+                strokeDashoffset={-arcOff}
+                transform="rotate(-90 56 56)"
+                style={{ cursor: "pointer", transition: "r 0.18s, stroke-width 0.18s", filter: isHov ? `drop-shadow(0 0 5px ${color}88)` : "none" }}
+                onMouseEnter={() => setHovered(sev)}
+                onMouseLeave={() => setHovered(null)}
+              >
+                <title>{sev}: {counts[sev].toLocaleString()} ({total ? Math.round((counts[sev] / total) * 100) : 0}%)</title>
+              </circle>
+            );
           })}
-          <text x="56" y="53" textAnchor="middle" fill="#8b949e" fontSize="10">TOTAL</text>
-          <text x="56" y="67" textAnchor="middle" fill="#e6edf3" fontSize="16" fontWeight="700">{total.toLocaleString()}</text>
+          {/* Center text — dark for white-bg panels */}
+          <text x="56" y="51" textAnchor="middle" fill={hovered ? colors[hovered] : "#64748b"}
+            fontSize="9" fontWeight="700" style={{ transition: "fill 0.2s" }}>
+            {hovered || "TOTAL"}
+          </text>
+          <text x="56" y="65" textAnchor="middle" fill="#0f172a" fontSize="15" fontWeight="800">
+            {(hovered ? counts[hovered] : total).toLocaleString()}
+          </text>
+          {hovered && (
+            <text x="56" y="75" textAnchor="middle" fill="#64748b" fontSize="8">
+              {total ? Math.round((counts[hovered] / total) * 100) : 0}% of total
+            </text>
+          )}
         </svg>
       </div>
       <div className="severity-legend">
-        {["CRITICAL","HIGH","MEDIUM","LOW"].map(sev => (
-          <div key={sev}>
+        {["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(sev => (
+          <div key={sev}
+            onMouseEnter={() => setHovered(sev)}
+            onMouseLeave={() => setHovered(null)}
+            style={{ cursor: "pointer", opacity: hovered && hovered !== sev ? 0.45 : 1, transition: "opacity 0.15s" }}>
             <span className={`legend-mark ${sev.toLowerCase()}`} />
             <span>{sev}</span>
             <strong>{counts[sev].toLocaleString()}</strong>
@@ -602,25 +648,93 @@ function SeverityDonut({ counts }: { counts: Record<string, number> }) {
 }
 
 function FindingsTrend({ anomalies }: { anomalies: RecordValue[] }) {
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; date: string; count: number } | null>(null);
   const grouped = anomalies.reduce<Record<string, number>>((r, item) => {
     const date = String(item.timestamp || "").slice(0, 10);
     if (date) r[date] = (r[date] || 0) + 1; return r;
   }, {});
   const points = Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).slice(-10);
   const max = Math.max(...points.map(([, c]) => c), 1);
-  const poly = points.map(([, c], i) =>
-    `${10 + (i * 180) / Math.max(points.length - 1, 1)},${92 - (c / max) * 70}`).join(" ");
+  const W = 200; const H = 112; const PAD = { t: 10, r: 10, b: 20, l: 10 };
+  const cx = (i: number) => PAD.l + (i * (W - PAD.l - PAD.r)) / Math.max(points.length - 1, 1);
+  const cy = (c: number) => PAD.t + ((max - c) / max) * (H - PAD.t - PAD.b);
+  const poly = points.map(([, c], i) => `${cx(i)},${cy(c)}`).join(" ");
+
   return (
-    <div className="trend-chart">
-      <svg viewBox="0 0 200 112" role="img" aria-label="Findings trend">
-        <line x1="10" y1="92" x2="190" y2="92" stroke="#30363d" strokeWidth="1" />
-        <line x1="10" y1="22" x2="10" y2="92" stroke="#30363d" strokeWidth="1" />
-        <polyline points={poly} fill="none" stroke="#1f6feb" strokeWidth="2.5" />
-        {points.map(([date, c], i) => (
-          <circle key={date} cx={10 + (i * 180) / Math.max(points.length - 1, 1)}
-            cy={92 - (c / max) * 70} r="3" fill="#1f6feb"><title>{date}: {c}</title></circle>
+    <div className="trend-chart" style={{ position: "relative" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Findings trend"
+        style={{ display: "block", width: "100%", cursor: "crosshair" }}
+        onMouseLeave={() => setTooltip(null)}
+        onMouseMove={e => {
+          const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+          const svgX = ((e.clientX - rect.left) / rect.width) * W;
+          // Find nearest data point
+          let nearest = 0;
+          let minDist = Infinity;
+          points.forEach(([, ], i) => { const d = Math.abs(cx(i) - svgX); if (d < minDist) { minDist = d; nearest = i; } });
+          if (points[nearest]) {
+            setTooltip({ x: cx(nearest), y: cy(points[nearest][1]), date: points[nearest][0], count: points[nearest][1] });
+          }
+        }}
+      >
+        {/* Grid lines */}
+        <line x1={PAD.l} y1={H - PAD.b} x2={W - PAD.r} y2={H - PAD.b} stroke="#e2e8f0" strokeWidth="1" />
+        <line x1={PAD.l} y1={PAD.t} x2={PAD.l} y2={H - PAD.b} stroke="#e2e8f0" strokeWidth="1" />
+        {[0.25, 0.5, 0.75].map(f => (
+          <line key={f} x1={PAD.l} y1={PAD.t + f * (H - PAD.t - PAD.b)}
+            x2={W - PAD.r} y2={PAD.t + f * (H - PAD.t - PAD.b)}
+            stroke="#f1f5f9" strokeWidth="1" strokeDasharray="3 3" />
         ))}
+        {/* Area fill */}
+        <defs>
+          <linearGradient id="trend-fill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#2563eb" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="#2563eb" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {points.length > 1 && (
+          <polygon
+            points={`${poly} ${cx(points.length - 1)},${H - PAD.b} ${cx(0)},${H - PAD.b}`}
+            fill="url(#trend-fill)"
+          />
+        )}
+        {/* Line */}
+        <polyline points={poly} fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+        {/* Data points */}
+        {points.map(([date, c], i) => (
+          <circle key={date} cx={cx(i)} cy={cy(c)} r="3.5" fill="#2563eb" stroke="#fff" strokeWidth="1.5" />
+        ))}
+        {/* Crosshair on hover */}
+        {tooltip && (
+          <>
+            <line x1={tooltip.x} y1={PAD.t} x2={tooltip.x} y2={H - PAD.b}
+              stroke="#2563eb" strokeWidth="1" strokeDasharray="4 3" opacity="0.6" />
+            <circle cx={tooltip.x} cy={tooltip.y} r="5" fill="#2563eb" stroke="#fff" strokeWidth="2" />
+          </>
+        )}
       </svg>
+      {/* Dark floating tooltip */}
+      {tooltip && (
+        <div style={{
+          position: "absolute",
+          top: 0, left: 0,
+          transform: `translate(${Math.min(tooltip.x / 200 * 100, 68)}%, -110%)`,
+          background: "#0f172a",
+          color: "#f8fafc",
+          padding: "7px 12px",
+          borderRadius: 7,
+          fontSize: 12,
+          fontWeight: 500,
+          pointerEvents: "none",
+          whiteSpace: "nowrap",
+          boxShadow: "0 4px 16px rgba(0,0,0,0.25)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          zIndex: 10,
+        }}>
+          <div style={{ color: "#94a3b8", fontSize: 11, marginBottom: 2 }}>{tooltip.date}</div>
+          <div><span style={{ color: "#60a5fa" }}>●</span> <strong style={{ color: "#f8fafc" }}>{tooltip.count}</strong> finding{tooltip.count !== 1 ? "s" : ""}</div>
+        </div>
+      )}
       <div className="trend-labels">
         {points.map(([date, c]) => <span key={date}>{date.slice(5)}<b>{c}</b></span>)}
       </div>

@@ -14,3 +14,11 @@ __pycache__/
 .venv/
 venv/
 env/
+
+# Sample file
+synthetic_soc_data.csv
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3

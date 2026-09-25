@@ -13,7 +13,7 @@ Endpoints:
 Air-gap constraints:
   - CORS locked to localhost origins only
   - All AI inference runs through a local Ollama instance (no cloud calls)
-  - All data stored in local CSV / SQLite — no external DB
+  - All data stored in local CSV / PostgreSQL — no external DB
 
 Usage:
   cd backend/
@@ -41,7 +41,7 @@ from supervisory_assessment import build_assessment
 from priority_engine import generate_priority_queue
 from report_generator import build_report, render_report
 
-# ── Database (SQLite via SQLAlchemy — air-gap safe) ──────────────────────────
+# ── Database (PostgreSQL via SQLAlchemy — air-gap safe) ──────────────────────
 from database import get_db, init_db
 from models import SocAlertRecord
 from sqlalchemy.orm import Session
@@ -139,10 +139,10 @@ async def _refresh_cache(alerts_path: Path, inv_path: Path) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Pre-compute the anomaly report if CSV data already exists."""
-    # ── Initialise SQLite schema (idempotent — CREATE TABLE IF NOT EXISTS) ────
-    logger.info("Startup: initialising local SQLite database ...")
+    # ── Initialise PostgreSQL schema (idempotent — CREATE TABLE IF NOT EXISTS) ──
+    logger.info("Startup: initialising PostgreSQL database schema ...")
     init_db()
-    logger.info("Startup: SQLite schema ready at sat_sa_records.db")
+    logger.info("Startup: PostgreSQL schema ready (sat_sa_db.soc_alert_records)")
 
     if ALERTS_CSV.exists() and INV_CSV.exists():
         logger.info("Startup: pre-computing anomaly report ...")
@@ -311,7 +311,7 @@ async def upload_csv(
 ):
     """
     Accept supported case evidence. CSV uploads replace the alert dataset,
-    bulk-insert all rows into the local SQLite database, and refresh analytics;
+    bulk-insert all rows into PostgreSQL database, and refresh analytics;
     other supported formats are stored for case review.
     """
     filename = file.filename or "case-file"
@@ -343,7 +343,7 @@ async def upload_csv(
 
     logger.info("Uploaded CSV saved to %s (%d bytes)", dest, dest.stat().st_size)
 
-    # ── Bulk-insert CSV rows into SQLite ─────────────────────────────────────
+    # ── Bulk-insert CSV rows into PostgreSQL ──────────────────────────────────
     try:
         df = pd.read_csv(dest)
 
@@ -385,12 +385,12 @@ async def upload_csv(
         db.bulk_save_objects(records)
         db.commit()
         logger.info(
-            "SQLite: inserted %d SOC alert records into soc_alert_records table.",
+            "PostgreSQL: inserted %d SOC alert records into soc_alert_records table.",
             len(records),
         )
     except Exception as exc:
         db.rollback()
-        logger.error("SQLite bulk-insert failed: %s", exc)
+        logger.error("PostgreSQL bulk-insert failed: %s", exc)
         # Non-fatal: log the error but continue so the analytics engine still runs
 
     if not INV_CSV.exists():
