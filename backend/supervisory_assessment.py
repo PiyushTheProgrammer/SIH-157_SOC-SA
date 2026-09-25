@@ -152,8 +152,26 @@ def build_assessment(alerts_df: pd.DataFrame, inventory_df: pd.DataFrame, report
     asset_counts = alerts_df["dest_asset"].value_counts().to_dict() if "dest_asset" in alerts_df else {}
     assets = []
     for _, asset in inventory_df.iterrows():
-        peer = inventory_df[inventory_df["asset_criticality"] == asset["asset_criticality"]]["asset_id"].map(asset_counts).fillna(0)
-        volume = int(asset_counts.get(asset["asset_id"], 0))
+        crit = asset.get("asset_criticality", "Medium")
+        
+        # Safely get series for peer comparison without KeyError
+        crit_col = inventory_df["asset_criticality"] if "asset_criticality" in inventory_df.columns else pd.Series([crit] * len(inventory_df))
+        id_col = inventory_df["asset_id"] if "asset_id" in inventory_df.columns else inventory_df.get("asset_name", pd.Series(["Unknown"] * len(inventory_df)))
+        
+        peer = id_col[crit_col == crit].map(asset_counts).fillna(0)
+        
+        asset_id_val = asset.get("asset_id", asset.get("asset_name", "Unknown"))
+        volume = int(asset_counts.get(asset_id_val, 0))
         expected = round(float(peer.mean()), 1) if len(peer) else 0.0
-        assets.append({"asset": asset["asset_id"], "criticality": asset["asset_criticality"], "type": asset["asset_type"], "department": asset["department"], "alert_volume": volume, "expected_peer_volume": expected, "deviation": round(volume - expected, 1), "monitoring_status": "Telemetry silence requiring review" if volume == 0 and asset["asset_criticality"] in {"CRITICAL", "HIGH"} else "Observed"})
+        
+        assets.append({
+            "asset": asset_id_val,
+            "criticality": crit,
+            "type": asset.get("asset_type", "Unknown"),
+            "department": asset.get("department", "Unassigned"),
+            "alert_volume": volume,
+            "expected_peer_volume": expected,
+            "deviation": round(volume - expected, 1),
+            "monitoring_status": "Telemetry silence requiring review" if volume == 0 and str(crit).upper() in {"CRITICAL", "HIGH"} else "Observed"
+        })
     return {"overall_score": overall, "dimensions": dimensions, "findings": attention_findings, "evidence": evidence, "assets": assets, "lifecycle": {"stages": ["Alert", "Case", "Investigation", "Escalation", "Response", "Recovery", "Closure"], "records_assessed": len(tickets), "finding": "Required evidence was not observed in the supplied records where applicable."}, "basis": "Missing evidence is an assessment signal, not proof that an action did not happen.", "analytics_signal_count": (report or {}).get("summary", {}).get("total_flagged_anomalies", 0)}

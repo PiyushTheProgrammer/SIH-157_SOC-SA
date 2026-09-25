@@ -81,10 +81,12 @@ class AnomalyReport:
     speed_anomalies: list[SpeedAnomaly] = field(default_factory=list)
     repetitive_notes: list[RepetitiveNoteCluster] = field(default_factory=list)
     blind_spots: list[BlindSpot] = field(default_factory=list)
+    trend: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
             "summary": self.summary,
+            "trend": self.trend or self.summary.get("trend", []),
             "speed_anomalies": [asdict(a) for a in self.speed_anomalies],
             "repetitive_notes": [asdict(c) for c in self.repetitive_notes],
             "blind_spots": [asdict(b) for b in self.blind_spots],
@@ -295,6 +297,13 @@ def _preprocess_inventory_df(df: pd.DataFrame) -> pd.DataFrame:
         else:
             df["asset_type"] = "Server"
     df["asset_type"] = df["asset_type"].fillna("Server").astype(str)
+
+    if "department" not in df.columns:
+        if "dept" in df.columns:
+            df["department"] = df["dept"].astype(str)
+        else:
+            df["department"] = "IT Infrastructure"
+    df["department"] = df["department"].fillna("IT Infrastructure").astype(str)
 
     return df
 
@@ -532,9 +541,19 @@ class BlindSpotDetector:
     def detect(
         self,
         alerts_df: pd.DataFrame,
-        inventory_df: pd.DataFrame,
+        inventory_df: pd.DataFrame | None = None,
     ) -> list[BlindSpot]:
         """Run detection. Returns flagged assets."""
+        if inventory_df is None or (isinstance(inventory_df, pd.DataFrame) and inventory_df.empty):
+            try:
+                from database import engine
+                with engine.connect() as conn:
+                    db_inv = pd.read_sql("SELECT * FROM asset_inventory", conn)
+                if not db_inv.empty:
+                    inventory_df = db_inv
+            except Exception:
+                pass
+
         if alerts_df is None or inventory_df is None or inventory_df.empty:
             return []
 
@@ -644,41 +663,37 @@ class AnalyticsOrchestrator:
 
     def __init__(
         self,
-        alerts_path: str | Path,
-        inventory_path: str | Path,
+        alerts_df: pd.DataFrame | None = None,
+        inventory_df: pd.DataFrame | None = None,
     ):
-        self.alerts_path = Path(alerts_path)
-        self.inventory_path = Path(inventory_path)
-        self._alerts_df: pd.DataFrame | None = None
-        self._inventory_df: pd.DataFrame | None = None
+        self._alerts_df = alerts_df
+        self._inventory_df = inventory_df
 
-    def load_data(self) -> None:
-        """Load CSVs into DataFrames."""
-        print(f"[Engine] Loading alerts from {self.alerts_path} ...")
-        self._alerts_df = pd.read_csv(self.alerts_path)
-        print(f"         -> {len(self._alerts_df)} tickets loaded.")
-
-        print(f"[Engine] Loading inventory from {self.inventory_path} ...")
-        self._inventory_df = pd.read_csv(self.inventory_path)
-        print(f"         -> {len(self._inventory_df)} assets loaded.")
+        # If inventory_df is not provided or empty, dynamically query PostgreSQL AssetInventory
+        if self._inventory_df is None or (isinstance(self._inventory_df, pd.DataFrame) and self._inventory_df.empty):
+            try:
+                from database import engine
+                with engine.connect() as conn:
+                    db_inv = pd.read_sql("SELECT * FROM asset_inventory", conn)
+                if not db_inv.empty:
+                    self._inventory_df = db_inv
+            except Exception:
+                pass
 
     @property
     def alerts_df(self) -> pd.DataFrame:
         if self._alerts_df is None:
-            raise RuntimeError("Data not loaded. Call load_data() first.")
+            raise RuntimeError("Data not loaded.")
         return self._alerts_df
 
     @property
     def inventory_df(self) -> pd.DataFrame:
         if self._inventory_df is None:
-            raise RuntimeError("Data not loaded. Call load_data() first.")
+            raise RuntimeError("Data not loaded.")
         return self._inventory_df
 
     def run(self) -> AnomalyReport:
         """Execute all detectors and build the unified report."""
-        if self._alerts_df is None:
-            self.load_data()
-
         report = AnomalyReport()
 
         # ── Detector 1: Speed anomalies ──
@@ -745,6 +760,21 @@ class AnalyticsOrchestrator:
                 }
             )
 
+        # Temporal analysis: Group alerts / findings by timestamp date
+        trend_map: dict[str, int] = {}
+        if "timestamp" in self.alerts_df.columns:
+            for ts in self.alerts_df["timestamp"].dropna():
+                ts_str = str(ts).strip()
+                if len(ts_str) >= 10:
+                    date_str = ts_str[:10]
+                    trend_map[date_str] = trend_map.get(date_str, 0) + 1
+
+        trend_data = [
+            {"date": d, "shortDate": d[5:] if len(d) >= 10 else d, "findings": c}
+            for d, c in sorted(trend_map.items())
+        ]
+        report.trend = trend_data
+
         report.summary = {
             "total_alerts": total,
             "total_flagged_anomalies": total_flagged,
@@ -754,6 +784,7 @@ class AnalyticsOrchestrator:
             "blind_spots_count": len(report.blind_spots),
             "overall_risk_score": risk_score,
             "entity_risk": entity_risk,
+            "trend": trend_data,
         }
 
         print(f"\n[Engine] [OK] Analysis complete. Risk score: {risk_score}/100")

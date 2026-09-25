@@ -1,16 +1,19 @@
 "use client";
 
+export const dynamic = 'force-dynamic';
+
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Database, Menu } from "lucide-react";
 import { Sidebar } from "../components/Sidebar";
 import { FindingsTrend } from "../components/FindingsTrend";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "";
+const API = "http://127.0.0.1:8000";
 type RecordValue = Record<string, any>;
 let overviewAnalyticsData: { dashboard: RecordValue; assessment: RecordValue } | null = null;
 
 async function request(path: string, options?: RequestInit) {
-  const response = await fetch(`${API}${path}`, options);
+  const response = await fetch(`${API}${path}`, { cache: "no-store", ...options });
   if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.detail ?? `Request failed (${response.status})`); }
   return response;
 }
@@ -28,23 +31,23 @@ function Shell({ children, path, setPath }: { children: React.ReactNode; path: s
         onClose={() => setIsOpen(false)}
       />
       <section className="main">
-        <header className="topbar sticky top-0 z-30 bg-white border-b border-slate-200 py-3.5">
-          <div className="flex items-center gap-4">
+        <header className="topbar sticky top-0 z-30 bg-white">
+          <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={() => setIsOpen(true)}
-              className="p-2 -ml-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              className="p-1.5 -ml-1 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
               aria-label="Open sidebar menu"
             >
-              <Menu className="w-7 h-7" />
+              <Menu className="w-5 h-5" />
             </button>
-            <div className="flex items-center gap-5">
-              <span className="text-5xl md:text-6xl lg:text-7xl font-black tracking-tight text-slate-900 leading-none">
+            <div className="flex items-center gap-2.5">
+              <span className="text-xl font-extrabold tracking-tight text-slate-800 leading-none">
                 SAT-SA
               </span>
-              <span className="text-slate-300 font-light text-4xl md:text-5xl lg:text-6xl leading-none">|</span>
-              <span className="font-extrabold text-slate-800 text-xl md:text-2xl lg:text-3xl hidden md:inline leading-tight">
-                Supervisory Analytics for SOC Assessment
+              <span className="text-slate-300 font-light text-base leading-none select-none">|</span>
+              <span className="font-semibold text-slate-600 text-sm hidden sm:inline leading-tight">
+                Supervisory Analytics Tool for SOC Assessment
               </span>
             </div>
           </div>
@@ -75,7 +78,7 @@ function Page({ title, subtitle, children }: { title: string; subtitle: string; 
   );
 }
 
-function EmptyState({ setPath }: { setPath?: (p: string) => void }) {
+function EmptyState({ setPath, title = "No Data Found", message = "Please upload SOC records via the Data Ingestion tab to generate insights." }: { setPath?: (p: string) => void; title?: string; message?: string }) {
   return (
     <div className="panel" style={{ textAlign: "center", padding: "64px 24px", maxWidth: 540, margin: "40px auto" }}>
       <div style={{
@@ -87,10 +90,10 @@ function EmptyState({ setPath }: { setPath?: (p: string) => void }) {
         <Database size={30} strokeWidth={2} />
       </div>
       <h2 style={{ fontSize: "22px", fontWeight: "700", color: "var(--text-primary)", margin: "0 0 8px" }}>
-        No Data Found
+        {title}
       </h2>
       <p style={{ color: "var(--text-secondary)", marginBottom: "28px", fontSize: "14px", lineHeight: "1.6" }}>
-        Please upload SOC records via the Data Ingestion tab to generate insights.
+        {message}
       </p>
       {setPath && (
         <button
@@ -118,8 +121,8 @@ function LoadState({ error, setPath }: { error: string | null; setPath?: (p: str
 }
 
 function Tag({ value }: { value: string }) {
-  const tone = ["Adequate","Observed","LOW","RESOLVED","CLOSED"].includes(value) ? "green"
-    : ["Attention","Missing","CRITICAL","URGENT"].includes(value) ? "red" : "amber";
+  const tone = ["Adequate", "Observed", "LOW", "RESOLVED", "CLOSED"].includes(value) ? "green"
+    : ["Attention", "Missing", "CRITICAL", "URGENT"].includes(value) ? "red" : "amber";
   return <span className={`tag ${tone}`}>{value}</span>;
 }
 
@@ -127,10 +130,10 @@ function Tag({ value }: { value: string }) {
 /* Upload Progress Bar Component                                        */
 /* ------------------------------------------------------------------ */
 const UPLOAD_STAGES = [
-  { label: "Uploading Data",                      from: 0,  to: 25  },
-  { label: "Running Scikit-Learn Anomaly Detection", from: 25, to: 60  },
-  { label: "Generating Local LLM Rationales",     from: 60, to: 90  },
-  { label: "Finalizing Audit Records",            from: 90, to: 100 },
+  { label: "Uploading Data", from: 0, to: 25 },
+  { label: "Running Scikit-Learn Anomaly Detection", from: 25, to: 60 },
+  { label: "Generating Local LLM Rationales", from: 60, to: 90 },
+  { label: "Finalizing Audit Records", from: 90, to: 100 },
 ] as const;
 
 function UploadProgressBar({ progress }: { progress: number }) {
@@ -172,15 +175,43 @@ function UploadProgressBar({ progress }: { progress: number }) {
 /* Data Ingestion – single, centralised upload location                */
 /* ------------------------------------------------------------------ */
 function DataIngestion({ setPath }: { setPath: (p: string) => void }) {
+  const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
+
+  async function handleClearDatabase() {
+    const confirmed = window.confirm(
+      "Are you sure you want to delete all records from the database? This action cannot be undone."
+    );
+    if (!confirmed) return;
+
+    setError("");
+    setSuccessMsg("");
+    setClearing(true);
+
+    try {
+      const response = await request("/api/data/clear", { method: "DELETE" });
+      const data = await response.json();
+      setFile(null);
+      setProgress(null);
+      setSuccessMsg(data?.message || "Database cleared successfully.");
+      router.refresh();
+    } catch (err: any) {
+      setError(err.message || "Failed to clear database.");
+    } finally {
+      setClearing(false);
+    }
+  }
 
   async function handleUpload(targetFile: File) {
     setFile(targetFile);
     setError("");
+    setSuccessMsg("");
     setUploading(true);
     setProgress(0);
 
@@ -241,6 +272,7 @@ function DataIngestion({ setPath }: { setPath: (p: string) => void }) {
 
       // Brief pause at 100% then navigate
       await new Promise(r => setTimeout(r, 800));
+      router.refresh();
       setPath("/");
     } catch (err: any) {
       setProgress(null);
@@ -285,11 +317,11 @@ function DataIngestion({ setPath }: { setPath: (p: string) => void }) {
             border: `2px dashed ${dragOver ? "var(--accent)" : "#cbd5e1"}`,
             borderRadius: 12,
             background: dragOver ? "var(--accent-dim)" : "#f8fafc",
-            cursor: uploading ? "not-allowed" : "pointer",
+            cursor: (uploading || clearing) ? "not-allowed" : "pointer",
             transition: "border-color 0.2s, background 0.2s",
             textAlign: "center",
-            opacity: uploading ? 0.6 : 1,
-            pointerEvents: uploading ? "none" : undefined,
+            opacity: (uploading || clearing) ? 0.6 : 1,
+            pointerEvents: (uploading || clearing) ? "none" : undefined,
           }}
         >
           <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
@@ -306,17 +338,67 @@ function DataIngestion({ setPath }: { setPath: (p: string) => void }) {
           <input id="file-upload-input" type="file" accept=".csv,.json" onChange={onFileChange} style={{ display: "none" }} />
         </label>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
           {file
             ? <span className="file-badge">&#128196; {file.name} <span style={{ color: "var(--text-secondary)" }}>({(file.size / 1024).toFixed(1)} KB)</span></span>
             : <span className="file-badge" style={{ color: "var(--text-muted)" }}>No file selected</span>}
-          <button className="btn-primary" onClick={() => file && handleUpload(file)} disabled={!file || uploading}>
+          <button className="btn-primary" onClick={() => file && handleUpload(file)} disabled={!file || uploading || clearing}>
             {uploading ? "Processing…" : "Submit for Analysis"}
+          </button>
+          <button
+            type="button"
+            onClick={handleClearDatabase}
+            disabled={uploading || clearing}
+            style={{
+              marginLeft: "auto",
+              padding: "9px 18px",
+              background: "#dc2626",
+              color: "#ffffff",
+              border: "1px solid #b91c1c",
+              borderRadius: "8px",
+              fontWeight: 600,
+              fontSize: "14px",
+              cursor: (uploading || clearing) ? "not-allowed" : "pointer",
+              opacity: (uploading || clearing) ? 0.6 : 1,
+              transition: "background 0.2s ease, opacity 0.2s ease",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "7px",
+              boxShadow: "0 1px 2px rgba(220, 38, 38, 0.2)",
+            }}
+            onMouseOver={e => { if (!uploading && !clearing) e.currentTarget.style.background = "#b91c1c"; }}
+            onMouseOut={e => { if (!uploading && !clearing) e.currentTarget.style.background = "#dc2626"; }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            {clearing ? "Clearing Database…" : "Clear Database"}
           </button>
         </div>
 
         {/* Real-time progress bar — shown during upload */}
         {progress !== null && <UploadProgressBar progress={progress} />}
+
+        {successMsg && (
+          <div style={{
+            marginTop: 16,
+            padding: "12px 16px",
+            background: "#ecfdf5",
+            border: "1px solid #6ee7b7",
+            color: "#065f46",
+            borderRadius: 8,
+            fontSize: 14,
+            fontWeight: 500,
+            display: "flex",
+            alignItems: "center",
+            gap: 10
+          }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>{successMsg}</span>
+          </div>
+        )}
 
         {error && <div className="error" style={{ marginTop: 16 }}>{error}</div>}
       </section>
@@ -328,14 +410,14 @@ function DataIngestion({ setPath }: { setPath: (p: string) => void }) {
           <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
           <tbody>
             {[
-              ["alert_id","string","Unique alert identifier (e.g. AL-1001)"],
-              ["entity_id","string","Entity / organisation identifier (e.g. ENT-A)"],
-              ["asset_name","string","Affected asset name (e.g. web-server-01)"],
-              ["alert_category","string","Alert category (Malware, DDoS, Unauthorised Access)"],
-              ["alert_severity","string","Severity level: Critical / High / Medium / Low"],
-              ["time_to_close_seconds","integer","Resolution time in seconds"],
-              ["escalated","boolean","Whether the alert was escalated (True / False)"],
-              ["resolution_notes","string","Free-text analyst notes"],
+              ["alert_id", "string", "Unique alert identifier (e.g. AL-1001)"],
+              ["entity_id", "string", "Entity / organisation identifier (e.g. ENT-A)"],
+              ["asset_name", "string", "Affected asset name (e.g. web-server-01)"],
+              ["alert_category", "string", "Alert category (Malware, DDoS, Unauthorised Access)"],
+              ["alert_severity", "string", "Severity level: Critical / High / Medium / Low"],
+              ["time_to_close_seconds", "integer", "Resolution time in seconds"],
+              ["escalated", "boolean", "Whether the alert was escalated (True / False)"],
+              ["resolution_notes", "string", "Free-text analyst notes"],
             ].map(([field, type, desc]) => (
               <tr key={field}>
                 <td><code style={{ color: "var(--accent)", fontSize: 11 }}>{field}</code></td>
@@ -384,28 +466,26 @@ function ExecutionGaps({ setPath }: { setPath: (p: string) => void }) {
           <span className="muted-note">Alerts flagged for unusually fast closure</span>
         </div>
         {!hasData || speedAnomalies.length === 0 ? (
-          <div style={{ padding: "32px 0", textAlign: "center" }}>
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
-              style={{ margin: "0 auto 12px", display: "block", color: "var(--text-muted)" }}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12h-15m0 0l6.75 6.75M4.5 12l6.75-6.75" />
-            </svg>
-            <p style={{ color: "var(--text-secondary)", margin: 0, fontSize: 14 }}>
-              No execution gaps detected. Please upload logs in the Data Ingestion tab.
-            </p>
-          </div>
+          <EmptyState
+            setPath={setPath}
+            title="No Execution Gaps"
+            message="No speed anomalies detected in the current dataset."
+          />
         ) : (
           <div className="table-wrap">
             <table className="data-table">
-              <thead><tr>{["Alert ID","Entity","Asset","Category","Severity","Closed (s)","Escalated","Notes"].map(h => <th key={h}>{h}</th>)}</tr></thead>
+              <thead><tr>{["Alert ID", "Entity", "Asset", "Category", "Severity", "Closed (s)", "Escalated", "Notes"].map(h => <th key={h}>{h}</th>)}</tr></thead>
               <tbody>
                 {speedAnomalies.slice(0, 50).map((row: RecordValue, i: number) => (
-                  <tr key={row.alert_id ?? i}>
-                    <td>{row.alert_id}</td><td>{row.entity_id}</td><td>{row.asset_name}</td>
-                    <td>{row.alert_category}</td>
-                    <td><Tag value={(row.alert_severity ?? "").toUpperCase()} /></td>
-                    <td><strong style={{ color: "var(--danger)" }}>{row.time_to_close_seconds}</strong></td>
+                  <tr key={row.ticket_id || row.alert_id || i}>
+                    <td>{row.ticket_id || row.alert_id}</td>
+                    <td>{row.entity_id || "–"}</td>
+                    <td>{row.dest_asset || row.asset_name || row.asset}</td>
+                    <td>{row.alert_type || row.alert_category}</td>
+                    <td><Tag value={String(row.severity || row.alert_severity || "").toUpperCase()} /></td>
+                    <td><strong style={{ color: "var(--danger)" }}>{row.time_to_close || row.time_to_close_seconds}</strong></td>
                     <td>{row.escalated ? <Tag value="YES" /> : <span style={{ color: "var(--text-muted)" }}>No</span>}</td>
-                    <td style={{ maxWidth: 280, whiteSpace: "normal" }}>{row.resolution_notes}</td>
+                    <td style={{ maxWidth: 280, whiteSpace: "normal" }}>{row.explanation || row.resolution_notes}</td>
                   </tr>
                 ))}
               </tbody>
@@ -441,20 +521,15 @@ function NegativeSpace({ setPath }: { setPath: (p: string) => void }) {
           <span className="muted-note">Assets or time windows with no monitoring signal</span>
         </div>
         {blindCount === 0 || blindSpots.length === 0 ? (
-          <div style={{ padding: "32px 0", textAlign: "center" }}>
-            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
-              style={{ margin: "0 auto 12px", display: "block", color: "var(--text-muted)" }}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            <p style={{ color: "var(--text-secondary)", margin: 0, fontSize: 14 }}>
-              No telemetry blind spots detected. Upload SOC records to run coverage analysis.
-            </p>
-          </div>
+          <EmptyState
+            setPath={setPath}
+            title="Insufficient Baseline Data"
+            message="Insufficient baseline inventory data to perform Blind Spot analysis. Please ensure asset inventory is provided alongside SOC alerts."
+          />
         ) : (
           <div className="table-wrap">
             <table className="data-table">
-              <thead><tr>{["Entity","Asset","Window / Period","Signal Type","Status"].map(h => <th key={h}>{h}</th>)}</tr></thead>
+              <thead><tr>{["Entity", "Asset", "Window / Period", "Signal Type", "Status"].map(h => <th key={h}>{h}</th>)}</tr></thead>
               <tbody>
                 {blindSpots.slice(0, 50).map((row: RecordValue, i: number) => (
                   <tr key={i}>
@@ -491,24 +566,32 @@ function PeerComparison({ setPath }: { setPath: (p: string) => void }) {
           <h2>Asset Risk Benchmarking</h2>
           <span className="muted-note">{assets.length} assets assessed</span>
         </div>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead><tr>{["Asset","Type","Dept","Alert Volume","Peer Expected","Deviation","Status"].map(h => <th key={h}>{h}</th>)}</tr></thead>
-            <tbody>
-              {sorted.map((asset: RecordValue, i: number) => (
-                <tr key={asset.asset ?? i}>
-                  <td><strong>{asset.asset}</strong></td>
-                  <td>{asset.type}</td><td>{asset.department}</td>
-                  <td>{asset.alert_volume}</td><td>{asset.expected_peer_volume}</td>
-                  <td style={{ color: (asset.deviation ?? 0) > 0 ? "var(--danger)" : "var(--success)", fontWeight: 700 }}>
-                    {(asset.deviation ?? 0) > 0 ? "+" : ""}{asset.deviation}
-                  </td>
-                  <td><Tag value={asset.monitoring_status === "Observed" ? "Observed" : "Attention"} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {assets.length === 0 ? (
+          <EmptyState
+            setPath={setPath}
+            title="Insufficient Baseline Data"
+            message="Insufficient baseline inventory data to perform Peer Comparison analysis. Please ensure asset inventory is provided alongside SOC alerts."
+          />
+        ) : (
+          <div className="table-wrap">
+            <table className="data-table">
+              <thead><tr>{["Asset", "Type", "Dept", "Alert Volume", "Peer Expected", "Deviation", "Status"].map(h => <th key={h}>{h}</th>)}</tr></thead>
+              <tbody>
+                {sorted.map((asset: RecordValue, i: number) => (
+                  <tr key={asset.asset ?? i}>
+                    <td><strong>{asset.asset}</strong></td>
+                    <td>{asset.type}</td><td>{asset.department}</td>
+                    <td>{asset.alert_volume}</td><td>{asset.expected_peer_volume}</td>
+                    <td style={{ color: (asset.deviation ?? 0) > 0 ? "var(--danger)" : "var(--success)", fontWeight: 700 }}>
+                      {(asset.deviation ?? 0) > 0 ? "+" : ""}{asset.deviation}
+                    </td>
+                    <td><Tag value={asset.monitoring_status === "Observed" ? "Observed" : "Attention"} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </Page>
   );
@@ -661,7 +744,7 @@ function SeverityDonut({ counts }: { counts: Record<string, number> }) {
 
 
 function AnalyticsStatistics({ dashboard, assessment }: { dashboard: RecordValue; assessment: RecordValue }) {
-  const counts = ["CRITICAL","HIGH","MEDIUM","LOW"].reduce<Record<string, number>>((r, sev) => {
+  const counts = ["CRITICAL", "HIGH", "MEDIUM", "LOW"].reduce<Record<string, number>>((r, sev) => {
     r[sev] = assessment.findings.filter((f: RecordValue) => f.severity === sev).length; return r;
   }, {});
   const signals = [
@@ -699,7 +782,7 @@ function AnalyticsStatistics({ dashboard, assessment }: { dashboard: RecordValue
         <section className="panel">
           <h2>Findings Trend</h2>
           <p className="chart-note">Closure-speed signals by observed ticket date.</p>
-          <FindingsTrend anomalies={dashboard.speed_anomalies} />
+          <FindingsTrend anomalies={dashboard.speed_anomalies} trend={dashboard.trend || dashboard.summary?.trend} />
         </section>
       </div>
       <div className="analytics-grid">
@@ -834,7 +917,7 @@ function Overview({ setPath }: { setPath: (p: string) => void }) {
         <section className="panel">
           <h2>Findings by Severity</h2>
           <div className="severity-list">
-            {["CRITICAL","HIGH","MEDIUM","LOW"].map(sev => (
+            {["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(sev => (
               <div key={sev}>
                 <Tag value={sev} />
                 <strong>{assessment.findings.filter((f: RecordValue) => f.severity === sev).length}</strong>
@@ -923,7 +1006,7 @@ function Findings() {
           </div>
           <div className="table-wrap">
             <table className="data-table">
-              <thead><tr>{["Priority","Severity","Case ID","Finding","Asset","Analyst","Status"].map(x => <th key={x}>{x}</th>)}</tr></thead>
+              <thead><tr>{["Priority", "Severity", "Case ID", "Finding", "Asset", "Analyst", "Status"].map(x => <th key={x}>{x}</th>)}</tr></thead>
               <tbody>
                 {data.findings.map((f: RecordValue) => (
                   <tr key={f.finding_id}>
@@ -960,8 +1043,10 @@ function PriorityWorkspace() {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus }),
       });
-      setData(cur => cur ? { ...cur, priorities: cur.priorities.map((item: RecordValue) =>
-        item.ticket_id === ticketId ? { ...item, status: nextStatus } : item) } : cur);
+      setData(cur => cur ? {
+        ...cur, priorities: cur.priorities.map((item: RecordValue) =>
+          item.ticket_id === ticketId ? { ...item, status: nextStatus } : item)
+      } : cur);
       setSelected(cur => cur ? { ...cur, status: nextStatus } : cur);
     } catch (err: any) { setError(err.message); }
   }
@@ -975,8 +1060,8 @@ function PriorityWorkspace() {
       [item.ticket_id, item.asset, item.analyst, item.alert_type].join(" ").toLowerCase().includes(query.toLowerCase()))
     .sort((a: RecordValue, b: RecordValue) =>
       sort === "rank" ? a.rank - b.rank :
-      sort === "timestamp" ? String(b.timestamp).localeCompare(String(a.timestamp)) :
-      b.priority_score - a.priority_score);
+        sort === "timestamp" ? String(b.timestamp).localeCompare(String(a.timestamp)) :
+          b.priority_score - a.priority_score);
 
   return (
     <Page title="AI-Assisted Prioritization" subtitle="Recommendation only. Analyst retains decision authority.">
@@ -984,15 +1069,15 @@ function PriorityWorkspace() {
         <input aria-label="Search cases" placeholder="Search case, asset, analyst..." value={query} onChange={e => setQuery(e.target.value)} />
         <select aria-label="Severity filter" value={severity} onChange={e => setSeverity(e.target.value)}>
           <option value="ALL">All severities</option>
-          {["CRITICAL","HIGH","MEDIUM","LOW"].map(v => <option key={v}>{v}</option>)}
+          {["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(v => <option key={v}>{v}</option>)}
         </select>
         <select aria-label="Classification filter" value={classification} onChange={e => setClassification(e.target.value)}>
           <option value="ALL">All classifications</option>
-          {["URGENT","HIGH","MEDIUM","LOW"].map(v => <option key={v}>{v}</option>)}
+          {["URGENT", "HIGH", "MEDIUM", "LOW"].map(v => <option key={v}>{v}</option>)}
         </select>
         <select aria-label="Status filter" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
           <option value="ALL">All statuses</option>
-          {["NEW","UNDER_REVIEW","ASSIGNED","INVESTIGATING","ESCALATED","RESOLVED","CLOSED"].map(v => <option key={v}>{v}</option>)}
+          {["NEW", "UNDER_REVIEW", "ASSIGNED", "INVESTIGATING", "ESCALATED", "RESOLVED", "CLOSED"].map(v => <option key={v}>{v}</option>)}
         </select>
         <select aria-label="Sort" value={sort} onChange={e => setSort(e.target.value)}>
           <option value="score">Sort by score</option>
@@ -1029,7 +1114,7 @@ function PriorityWorkspace() {
           <p className="subtitle">Priority {selected.priority_score} | {selected.severity} | {selected.asset}</p>
           <label className="detail-status">Review status
             <select aria-label="Update status" value={selected.status} onChange={e => updateStatus(selected.ticket_id, e.target.value)}>
-              {["NEW","UNDER_REVIEW","ASSIGNED","INVESTIGATING","ESCALATED","RESOLVED","CLOSED"].map(v => <option key={v}>{v}</option>)}
+              {["NEW", "UNDER_REVIEW", "ASSIGNED", "INVESTIGATING", "ESCALATED", "RESOLVED", "CLOSED"].map(v => <option key={v}>{v}</option>)}
             </select>
           </label>
           <h3>Review reasons</h3>
@@ -1076,7 +1161,7 @@ function DataSystem() {
     <Page title="Data &amp; System" subtitle="Dataset provenance, quality checks, and local processing status.">
       {!data ? <LoadState error={error} /> : (
         <div className="grid grid-2">
-          {["dataset","data_quality","processing"].map(section => (
+          {["dataset", "data_quality", "processing"].map(section => (
             <section className="panel" key={section}>
               <h2>{section.replaceAll("_", " ")}</h2>
               {Object.entries(data[section]).map(([key, value]) => (
@@ -1096,12 +1181,12 @@ function DataSystem() {
 function Evidence() {
   return <SimpleDataPage endpoint="/api/evidence" title="Evidence Review"
     subtitle="Lifecycle evidence review. Missing means not observed in the supplied records."
-    columns={["ticket_id","severity","alert_type","analyst","asset","assessment"]} />;
+    columns={["ticket_id", "severity", "alert_type", "analyst", "asset", "assessment"]} />;
 }
 function Assets() {
   return <SimpleDataPage endpoint="/api/assets" title="Asset Monitoring"
     subtitle="Peer comparison of observed alert volume and telemetry coverage."
-    columns={["asset","criticality","type","department","alert_volume","expected_peer_volume","monitoring_status"]} />;
+    columns={["asset", "criticality", "type", "department", "alert_volume", "expected_peer_volume", "monitoring_status"]} />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1111,12 +1196,12 @@ export default function App() {
   const [path, setPath] = useState("/");
 
   const page =
-    path === "/data-ingestion"  ? <DataIngestion setPath={setPath} /> :
-    path === "/execution-gaps"  ? <ExecutionGaps setPath={setPath} /> :
-    path === "/negative-space"  ? <NegativeSpace setPath={setPath} /> :
-    path === "/peer-comparison" ? <PeerComparison setPath={setPath} /> :
-    path === "/audit-reports"   ? <AuditReports /> :
-    <Overview setPath={setPath} />;
+    path === "/data-ingestion" ? <DataIngestion setPath={setPath} /> :
+      path === "/execution-gaps" ? <ExecutionGaps setPath={setPath} /> :
+        path === "/negative-space" ? <NegativeSpace setPath={setPath} /> :
+          path === "/peer-comparison" ? <PeerComparison setPath={setPath} /> :
+            path === "/audit-reports" ? <AuditReports /> :
+              <Overview setPath={setPath} />;
 
   return <Shell path={path} setPath={setPath}>{page}</Shell>;
 }

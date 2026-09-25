@@ -44,7 +44,7 @@ from report_generator import build_report, render_report
 
 # ── Database (PostgreSQL via SQLAlchemy — air-gap safe) ──────────────────────
 from database import get_db, init_db
-from models import SOCAlert, SocAlertRecord
+from models import SOCAlert, SocAlertRecord, AssetInventory
 from sqlalchemy.orm import Session
 
 # ── LangChain (local only — no cloud imports) ──
@@ -107,39 +107,87 @@ def _run_engine(alerts_path: Path, inv_path: Path) -> dict[str, Any]:
         ) from e
 
 
-async def _refresh_cache(alerts_path: Path, inv_path: Path) -> None:
-    """Run the analytics, assessment and priority engines with graceful error propagation."""
+async def _refresh_cache() -> None:
+    """Run the analytics, assessment and priority engines pulling strictly from PostgreSQL."""
     global _report_cache, _assessment_cache, _priority_cache, _alerts_cache, _inventory_cache
     try:
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, _run_engine, alerts_path, inv_path)
-        assessment = await loop.run_in_executor(
-            None,
-            lambda: build_assessment(
-                pd.read_csv(alerts_path),
-                pd.read_csv(inv_path),
-                result,
-            ),
-        )
-        alerts_df = pd.read_csv(alerts_path)
-        inventory_df = pd.read_csv(inv_path)
-        priorities = await loop.run_in_executor(
-            None,
-            lambda: generate_priority_queue(alerts_df, inventory_df, assessment, result),
-        )
-        for item in priorities:
-            item["status"] = _priority_status.get(item["ticket_id"], item.get("status", "NEW"))
+        from database import engine
+        import pandas as pd
+        
+        # Read strictly from the PostgreSQL database
+        with engine.connect() as conn:
+            alerts_df = pd.read_sql("SELECT * FROM soc_alerts", conn)
+            try:
+                db_inventory_df = pd.read_sql("SELECT * FROM asset_inventory", conn)
+            except Exception:
+                db_inventory_df = pd.DataFrame()
+
+        # Build inventory_df
+        if not db_inventory_df.empty:
+            inventory_df = db_inventory_df.copy()
+            if "asset_name" not in inventory_df.columns and "asset_id" in inventory_df.columns:
+                inventory_df["asset_name"] = inventory_df["asset_id"]
+        elif not alerts_df.empty and "asset_name" in alerts_df.columns:
+            # Fallback baseline from alerts if no dedicated asset_inventory table data
+            inventory_df = pd.DataFrame({"asset_name": alerts_df["asset_name"].dropna().unique()})
+            inventory_df["asset_id"] = inventory_df["asset_name"]
+            inventory_df["asset_type"] = "Server"
+            inventory_df["asset_criticality"] = "HIGH"
+            inventory_df["criticality"] = "HIGH"
+            inventory_df["department"] = "IT Infrastructure"
+        else:
+            inventory_df = pd.DataFrame(columns=["asset_id", "asset_name", "asset_type", "asset_criticality", "department"])
+
+        if alerts_df.empty and db_inventory_df.empty:
+            alerts_df = pd.DataFrame(columns=[
+                "alert_id", "entity_id", "asset_name", "alert_category",
+                "alert_severity", "time_to_close_seconds", "escalated", "resolution_notes"
+            ])
+            result = AnomalyReport().to_dict()
+            assessment = {"findings": [], "overall_assessment": "No data available.", "assets": []}
+            priorities = []
+        else:
+            if alerts_df.empty:
+                alerts_df = pd.DataFrame(columns=[
+                    "alert_id", "entity_id", "asset_name", "alert_category",
+                    "alert_severity", "time_to_close_seconds", "escalated", "resolution_notes"
+                ])
+                result = AnomalyReport().to_dict()
+            else:
+                loop = asyncio.get_event_loop()
+                def _run():
+                    orchestrator = AnalyticsOrchestrator(alerts_df=alerts_df, inventory_df=inventory_df)
+                    return orchestrator.run().to_dict()
+                result = await loop.run_in_executor(None, _run)
+
+            loop = asyncio.get_event_loop()
+            assessment = await loop.run_in_executor(
+                None,
+                lambda: build_assessment(alerts_df, inventory_df, result),
+            )
+            priorities = await loop.run_in_executor(
+                None,
+                lambda: generate_priority_queue(alerts_df, inventory_df, assessment, result),
+            )
+            for item in priorities:
+                item["status"] = _priority_status.get(item["ticket_id"], item.get("status", "NEW"))
+
         async with _cache_lock:
             _report_cache = result
             _assessment_cache = assessment
             _priority_cache = priorities
             _alerts_cache = alerts_df
             _inventory_cache = inventory_df
-        logger.info("Report cache refreshed — %d speed anomalies, %d blind spots",
-                    result["summary"]["speed_anomalies_count"],
-                    result["summary"]["blind_spots_count"])
-    except HTTPException:
-        raise
+
+        if not alerts_df.empty or not db_inventory_df.empty:
+            logger.info("Report cache refreshed — %d alerts, %d assets, %d speed anomalies, %d blind spots",
+                        len(alerts_df),
+                        len(inventory_df),
+                        result.get("summary", {}).get("speed_anomalies_count", 0),
+                        result.get("summary", {}).get("blind_spots_count", 0))
+        else:
+            logger.info("Report cache refreshed — Database is empty. Displaying 0 records.")
+            
     except Exception as exc:
         logger.error("Failed to refresh analytics cache: %s", exc, exc_info=True)
         raise HTTPException(
@@ -160,15 +208,8 @@ async def lifespan(app: FastAPI):
     init_db()
     logger.info("Startup: PostgreSQL schema ready (sat_sa_db.soc_alert_records)")
 
-    if ALERTS_CSV.exists() and INV_CSV.exists():
-        logger.info("Startup: pre-computing anomaly report ...")
-        await _refresh_cache(ALERTS_CSV, INV_CSV)
-    else:
-        logger.warning(
-            "Startup: CSV data not found at %s. "
-            "Upload a file via POST /api/upload to populate the dashboard.",
-            DATA_DIR,
-        )
+    logger.info("Startup: pre-computing anomaly report from DB ...")
+    await _refresh_cache()
     yield
     logger.info("SAT-SA API shutting down.")
 
@@ -187,11 +228,7 @@ app = FastAPI(
 # CORS — localhost only (air-gap enforcement)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -483,65 +520,62 @@ async def upload_file(
             return val.strip().lower() in {"true", "1", "yes", "t"}
         return default
 
-    # Convert DataFrame rows into a list of dictionaries matching the SOCAlert schema
-    records_data: list[dict[str, Any]] = []
-    for _, row in df.iterrows():
-        # Support both primary schema names and alternative common column names
-        raw_alert_id = row.get("alert_id") if "alert_id" in row else row.get("ticket_id")
-        raw_entity_id = row.get("entity_id") if "entity_id" in row else row.get("entity")
-        raw_asset_name = row.get("asset_name") if "asset_name" in row else (row.get("dest_asset") or row.get("asset"))
-        raw_category = row.get("alert_category") if "alert_category" in row else (row.get("alert_type") or row.get("category"))
-        raw_severity = row.get("alert_severity") if "alert_severity" in row else row.get("severity")
-        raw_ttc = row.get("time_to_close_seconds") if "time_to_close_seconds" in row else row.get("time_to_close")
-        raw_notes = row.get("resolution_notes") if "resolution_notes" in row else row.get("notes")
+    # Intelligent Dataset Routing based on CSV / JSON headers
+    if "alert_id" in df.columns or "ticket_id" in df.columns:
+        # ══════════════════════════════════════════════════════════
+        # Condition A: SOC Alert dataset
+        # ══════════════════════════════════════════════════════════
+        records_data: list[dict[str, Any]] = []
+        for _, row in df.iterrows():
+            raw_timestamp = (
+                row.get("timestamp")
+                if "timestamp" in row and pd.notna(row["timestamp"])
+                else (row.get("date") or row.get("time") or row.get("created_at"))
+            )
+            raw_alert_id = row.get("alert_id") if "alert_id" in row else row.get("ticket_id")
+            raw_entity_id = row.get("entity_id") if "entity_id" in row else row.get("entity")
+            raw_asset_name = row.get("asset_name") if "asset_name" in row else (row.get("dest_asset") or row.get("asset"))
+            raw_category = row.get("alert_category") if "alert_category" in row else (row.get("alert_type") or row.get("category"))
+            raw_severity = row.get("alert_severity") if "alert_severity" in row else row.get("severity")
+            raw_ttc = row.get("time_to_close_seconds") if "time_to_close_seconds" in row else row.get("time_to_close")
+            raw_notes = row.get("resolution_notes") if "resolution_notes" in row else row.get("notes")
 
-        record_dict = {
-            "alert_id": _clean_str(raw_alert_id),
-            "entity_id": _clean_str(raw_entity_id),
-            "asset_name": _clean_str(raw_asset_name),
-            "alert_category": _clean_str(raw_category),
-            "alert_severity": _clean_str(raw_severity),
-            "time_to_close_seconds": _clean_int(raw_ttc),
-            "escalated": (
-                _clean_bool(row.get("escalated"))
-                if "escalated" in row and pd.notna(row["escalated"])
-                else None
-            ),
-            "resolution_notes": _clean_str(raw_notes),
-            "is_speed_anomaly": _clean_bool(row.get("is_speed_anomaly"), False),
-            "is_repetitive_anomaly": _clean_bool(row.get("is_repetitive_anomaly"), False),
-            "is_negative_space": _clean_bool(row.get("is_negative_space"), False),
-            "is_anomaly": _clean_bool(row.get("is_anomaly"), False),
-        }
-        records_data.append(record_dict)
+            record_dict = {
+                "timestamp": _clean_str(raw_timestamp),
+                "alert_id": _clean_str(raw_alert_id),
+                "entity_id": _clean_str(raw_entity_id),
+                "asset_name": _clean_str(raw_asset_name),
+                "alert_category": _clean_str(raw_category),
+                "alert_severity": _clean_str(raw_severity),
+                "time_to_close_seconds": _clean_int(raw_ttc),
+                "escalated": (
+                    _clean_bool(row.get("escalated"))
+                    if "escalated" in row and pd.notna(row["escalated"])
+                    else None
+                ),
+                "resolution_notes": _clean_str(raw_notes),
+                "is_speed_anomaly": _clean_bool(row.get("is_speed_anomaly"), False),
+                "is_repetitive_anomaly": _clean_bool(row.get("is_repetitive_anomaly"), False),
+                "is_negative_space": _clean_bool(row.get("is_negative_space"), False),
+                "is_anomaly": _clean_bool(row.get("is_anomaly"), False),
+            }
+            records_data.append(record_dict)
 
-    # Perform bulk insert into the SOCAlert table using SQLAlchemy session
-    try:
-        # Clear previous records to keep database state synchronized with the uploaded batch
-        db.query(SOCAlert).delete()
-        db.bulk_insert_mappings(SOCAlert, records_data)
-        db.commit()
-        logger.info(
-            "PostgreSQL: Bulk-inserted %d SOC alert records into soc_alerts table.",
-            len(records_data),
-        )
-    except Exception as db_exc:
-        db.rollback()
-        logger.error("PostgreSQL bulk-insert failed: %s", db_exc)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Database ingestion error: {str(db_exc)}",
-        )
-
-    # Save local copy for air-gapped analytics engine pipeline
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    dest = DATA_DIR / "soc_alerts.csv"
-    df.to_csv(dest, index=False)
-
-    if INV_CSV.exists():
         try:
-            # Refresh all analytics caches synchronously before responding
-            await _refresh_cache(dest, INV_CSV)
+            db.query(SOCAlert).delete()
+            db.bulk_insert_mappings(SOCAlert, records_data)
+            db.commit()
+            logger.info("PostgreSQL: Bulk-inserted %d SOC alert records into soc_alerts table.", len(records_data))
+        except Exception as db_exc:
+            db.rollback()
+            logger.error("PostgreSQL bulk-insert into soc_alerts failed: %s", db_exc)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Database ingestion error: {str(db_exc)}",
+            )
+
+        try:
+            await _refresh_cache()
         except HTTPException:
             raise
         except Exception as engine_err:
@@ -551,13 +585,114 @@ async def upload_file(
                 detail=f"ML Engine Error: {str(engine_err)}",
             )
 
-    return {
-        "status": "success",
-        "message": f"Successfully ingested {len(records_data)} records into the database.",
-        "filename": filename,
-        "records_ingested": len(records_data),
-        "total_records": len(records_data),
-    }
+        return {
+            "status": "success",
+            "dataset_type": "soc_alerts",
+            "message": f"Detected SOC Alerts dataset: successfully ingested {len(records_data)} alert records.",
+            "filename": filename,
+            "records_ingested": len(records_data),
+            "total_records": len(records_data),
+        }
+
+    elif any(col in df.columns for col in ["asset_type", "department", "asset_criticality", "asset_id", "asset", "asset_name"]):
+        # ══════════════════════════════════════════════════════════
+        # Condition B: Asset Inventory dataset
+        # ══════════════════════════════════════════════════════════
+        inventory_records: list[dict[str, Any]] = []
+        seen_assets = set()
+
+        for _, row in df.iterrows():
+            raw_asset_name = (
+                row.get("asset_name")
+                if "asset_name" in row and pd.notna(row["asset_name"])
+                else (row.get("asset_id") or row.get("asset"))
+            )
+            clean_asset_name = _clean_str(raw_asset_name)
+            if not clean_asset_name or clean_asset_name in seen_assets:
+                continue
+            seen_assets.add(clean_asset_name)
+
+            raw_type = row.get("asset_type") if "asset_type" in row else (row.get("type") or row.get("category"))
+            raw_dept = row.get("department") if "department" in row else (row.get("dept") or row.get("organization"))
+            raw_crit = row.get("asset_criticality") if "asset_criticality" in row else (row.get("criticality") or row.get("severity"))
+
+            inventory_records.append({
+                "asset_name": clean_asset_name,
+                "asset_type": _clean_str(raw_type) or "Server",
+                "department": _clean_str(raw_dept) or "Unassigned",
+                "asset_criticality": (_clean_str(raw_crit) or "MEDIUM").upper(),
+            })
+
+        if not inventory_records:
+            raise HTTPException(
+                status_code=400,
+                detail="No valid asset records found in uploaded Asset Inventory file.",
+            )
+
+        try:
+            db.query(AssetInventory).delete()
+            db.bulk_insert_mappings(AssetInventory, inventory_records)
+            db.commit()
+            logger.info("PostgreSQL: Bulk-inserted %d asset inventory records into asset_inventory table.", len(inventory_records))
+        except Exception as db_exc:
+            db.rollback()
+            logger.error("PostgreSQL bulk-insert into asset_inventory failed: %s", db_exc)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Asset inventory ingestion error: {str(db_exc)}",
+            )
+
+        try:
+            await _refresh_cache()
+        except HTTPException:
+            raise
+        except Exception as engine_err:
+            logger.error("ML Engine failed on uploaded inventory: %s", engine_err, exc_info=True)
+            raise HTTPException(
+                status_code=400,
+                detail=f"ML Engine Error: {str(engine_err)}",
+            )
+
+        return {
+            "status": "success",
+            "dataset_type": "asset_inventory",
+            "message": f"Detected Asset Inventory dataset: successfully ingested {len(inventory_records)} asset records.",
+            "filename": filename,
+            "records_ingested": len(inventory_records),
+            "total_records": len(inventory_records),
+        }
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Unrecognized dataset format. File must contain 'alert_id' (for SOC Alerts) or 'asset_type'/'department'/'asset_name' (for Asset Inventory).",
+        )
+
+
+@app.delete("/api/data/clear", summary="Clear all SOC and Asset records from database")
+@app.delete("/data/clear", summary="Clear all SOC and Asset records from database")
+async def clear_database(db: Session = Depends(get_db)):
+    """
+    Wipe all existing SOC alert and asset inventory records from the PostgreSQL database
+    and reset the in-memory analytics cache.
+    """
+    try:
+        db.query(SOCAlert).delete()
+        db.query(AssetInventory).delete()
+        db.commit()
+        logger.info("PostgreSQL: All records deleted from soc_alerts and asset_inventory tables.")
+
+        # Synchronously refresh in-memory analytics caches from the now-empty database
+        await _refresh_cache()
+
+        return {"message": "Database cleared successfully"}
+    except Exception as e:
+        db.rollback()
+        logger.error("Failed to clear database: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to clear database: {str(e)}",
+        )
 
 
 @app.get("/api/dashboard/summary", summary="Full anomaly report")

@@ -13,16 +13,34 @@ import {
 
 interface FindingsTrendProps {
   anomalies?: Record<string, any>[];
+  trend?: Record<string, any>[];
 }
 
-export function FindingsTrend({ anomalies = [] }: FindingsTrendProps) {
+export function FindingsTrend({ anomalies = [], trend = [] }: FindingsTrendProps) {
   const data = useMemo(() => {
+    // 1. If backend summary provided pre-computed trend data, plot directly
+    if (trend && trend.length > 0) {
+      return trend
+        .filter(item => item && (item.date || item.shortDate))
+        .map(item => {
+          const dateStr = String(item.date || item.shortDate || "");
+          return {
+            date: dateStr,
+            shortDate: String(item.shortDate || (dateStr.length >= 10 ? dateStr.slice(5) : dateStr)),
+            findings: Number(item.findings ?? item.count ?? 1),
+          };
+        })
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .slice(-15);
+    }
+
+    // 2. Otherwise dynamically group anomalies by timestamp
     if (!anomalies || !anomalies.length) return [];
 
     const grouped = anomalies.reduce<Record<string, number>>((acc, item) => {
-      const rawDate = item.timestamp || item.investigation_started || "";
+      const rawDate = item.timestamp || item.investigation_started || item.date || "";
       const date = String(rawDate).slice(0, 10);
-      if (date) {
+      if (date && date !== "None" && date !== "null" && date !== "undefined") {
         acc[date] = (acc[date] || 0) + 1;
       }
       return acc;
@@ -30,18 +48,18 @@ export function FindingsTrend({ anomalies = [] }: FindingsTrendProps) {
 
     return Object.entries(grouped)
       .sort(([a], [b]) => a.localeCompare(b))
-      .slice(-10)
+      .slice(-15)
       .map(([date, count]) => ({
         date,
         shortDate: date.length >= 10 ? date.slice(5) : date,
         findings: count,
       }));
-  }, [anomalies]);
+  }, [anomalies, trend]);
 
   if (!data.length) {
     return (
-      <div className="flex items-center justify-center h-44 text-slate-400 text-sm">
-        No findings trend data available
+      <div className="flex items-center justify-center h-44 text-slate-400 text-sm text-center px-4">
+        No temporal data available. Ensure your dataset includes a 'timestamp' or 'date' column to view trend analysis.
       </div>
     );
   }

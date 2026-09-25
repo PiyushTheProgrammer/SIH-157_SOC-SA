@@ -68,9 +68,12 @@ a:hover { color: var(--accent-hover); text-decoration: underline; }
 .nav a:hover, .nav button:hover { background: rgba(255, 255, 255, 0.15); color: #ffffff !important; text-decoration: none; }
 .nav a.active, .nav button.active { background: #ffffff !important; color: #1e40af !important; font-weight: 700; }
 
-.topbar { min-height: 72px; height: auto; padding: 12px 28px; border-bottom: 1px solid var(--border); background: var(--bg-surface); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.topbar { min-height: 54px; height: 54px; padding: 0 20px; border-bottom: 1px solid var(--border); background: var(--bg-surface); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
 .topbar h1 { margin: 0; color: var(--text-primary); font-size: 15px; font-weight: 700; letter-spacing: 0.01em; display: flex; align-items: baseline; gap: 6px; }
-.topbar span { color: var(--text-secondary); font-size: 13px; }
+.topbar-meta span { color: var(--text-secondary); font-size: 13px; }
+.sat-title { font-size: 28px !important; font-weight: 900 !important; letter-spacing: -0.02em !important; color: #0f172a !important; line-height: 1 !important; display: inline-block !important; }
+.sat-divider { font-size: 24px !important; font-weight: 300 !important; color: #cbd5e1 !important; line-height: 1 !important; user-select: none !important; }
+.sat-subtitle { font-size: 18px !important; font-weight: 700 !important; color: #334155 !important; line-height: 1.2 !important; }
 .topbar-meta { display: flex; align-items: center; gap: 24px; text-align: right; font-size: 13px; }
 .topbar-meta b { font-size: 13px; color: var(--text-primary); }
 .system-status { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--success); font-weight: 500; font-size: 13px; }

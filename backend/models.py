@@ -42,6 +42,7 @@ class SOCAlert(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
 
     # ── NCIIPC Synthetic Dataset Core Columns ─────────────────────────────────
+    timestamp = Column(String(64), index=True, nullable=True, comment="Alert timestamp or creation time")
     alert_id = Column(String(64), index=True, nullable=True, comment="Alert identifier, e.g. AL-1001")
     entity_id = Column(String(64), index=True, nullable=True, comment="Entity identifier, e.g. ENT-A")
     asset_name = Column(String(128), index=True, nullable=True, comment="Asset name, e.g. web-server-01")
@@ -63,6 +64,7 @@ class SOCAlert(Base):
         """Convert ORM model instance into a dictionary."""
         return {
             "id": self.id,
+            "timestamp": self.timestamp,
             "alert_id": self.alert_id,
             "entity_id": self.entity_id,
             "asset_name": self.asset_name,
@@ -86,3 +88,42 @@ class SOCAlert(Base):
 
 # Backward compatibility alias
 SocAlertRecord = SOCAlert
+
+
+class AssetInventory(Base):
+    """
+    SQLAlchemy ORM model representing an asset in the organization inventory.
+
+    Columns:
+      - asset_name: Host / asset name (Primary Key)
+      - asset_type: Category/type of asset (e.g., Database Server, Workstation)
+      - department: Owning department (e.g., IT Infrastructure, Finance)
+      - asset_criticality: Criticality rating (CRITICAL, HIGH, MEDIUM, LOW)
+    """
+
+    __tablename__ = "asset_inventory"
+
+    asset_name = Column(String(128), primary_key=True, index=True, comment="Unique asset name (Primary Key)")
+    asset_type = Column(String(64), nullable=True, comment="Asset category/type, e.g. Server, Workstation")
+    department = Column(String(128), nullable=True, comment="Owner department, e.g. Engineering, Finance")
+    asset_criticality = Column(String(32), nullable=True, comment="Criticality level: CRITICAL, HIGH, MEDIUM, LOW")
+
+    @property
+    def asset_id(self) -> str:
+        return self.asset_name
+
+    def to_dict(self) -> dict:
+        """Convert ORM model instance into a dictionary."""
+        return {
+            "asset_name": self.asset_name,
+            "asset_id": self.asset_name,
+            "asset_type": self.asset_type,
+            "department": self.department,
+            "asset_criticality": self.asset_criticality,
+        }
+
+    def __repr__(self) -> str:
+        return (
+            f"<AssetInventory asset_name={self.asset_name!r} type={self.asset_type!r} "
+            f"criticality={self.asset_criticality!r}>"
+        )

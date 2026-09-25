@@ -85,5 +85,31 @@ def init_db() -> None:
     CREATE TABLE IF NOT EXISTS for each registered table against PostgreSQL.
     Invoked during FastAPI application startup.
     """
+    from sqlalchemy import text
     import models  # noqa: F401 — side-effect registers ORM mappings
+
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE soc_alerts ADD COLUMN IF NOT EXISTS timestamp VARCHAR(64);"))
+        except Exception:
+            pass
+
+        try:
+            conn.execute(text("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name='asset_inventory' AND column_name='asset_id'
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name='asset_inventory' AND column_name='asset_name'
+                    ) THEN
+                        DROP TABLE asset_inventory;
+                    END IF;
+                END $$;
+            """))
+        except Exception:
+            pass
+
     Base.metadata.create_all(bind=engine)
