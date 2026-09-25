@@ -22,3 +22,6 @@ synthetic_soc_data.csv
 *.db
 *.sqlite
 *.sqlite3
+
+# Documents
+*.docx
