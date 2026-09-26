@@ -1,4 +1,0 @@
-closure_id,case_id,disposition,resolution_notes,time_to_close_seconds,closed_at
-CLS-101,CAS-901,True Positive,User account compromised. Reset password and blocked source IP.,1800,2026-09-24T08:45:00Z
-CLS-102,CAS-903,False Positive,Checked logs. All good.,120,2026-09-24T11:12:00Z
-CLS-103,CAS-904,True Positive,Auto-quarantined by EDR.,10,2026-09-24T14:31:10Z

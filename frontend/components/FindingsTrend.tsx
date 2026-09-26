@@ -65,34 +65,34 @@ export function FindingsTrend({ anomalies = [], trend = [] }: FindingsTrendProps
   }
 
   return (
-    <div className="w-full h-44 pt-2">
+    <div className="w-full pt-1" style={{ height: 236 }}>
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart
           data={data}
-          margin={{ top: 10, right: 12, left: -22, bottom: 4 }}
+          margin={{ top: 12, right: 12, left: -20, bottom: 4 }}
         >
           <defs>
             <linearGradient id="findingsTrendGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#2563EB" stopOpacity={0.22} />
+              <stop offset="5%" stopColor="#2563EB" stopOpacity={0.18} />
               <stop offset="95%" stopColor="#2563EB" stopOpacity={0.0} />
             </linearGradient>
           </defs>
 
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke="#F1F5F9"
+            stroke="#d8e8e1"
             vertical={false}
           />
 
           <XAxis
             dataKey="shortDate"
-            tick={{ fontSize: 11, fill: "#64748B" }}
-            axisLine={{ stroke: "#E2E8F0" }}
+            tick={{ fontSize: 11, fill: "#475569" }}
+            axisLine={{ stroke: "#bfe5d6" }}
             tickLine={false}
           />
 
           <YAxis
-            tick={{ fontSize: 11, fill: "#64748B" }}
+            tick={{ fontSize: 11, fill: "#475569" }}
             axisLine={false}
             tickLine={false}
             allowDecimals={false}

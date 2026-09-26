@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { Database, Menu } from "lucide-react";
+import { Database, Menu, ShieldCheck } from "lucide-react";
 import { Sidebar } from "../components/Sidebar";
 import { FindingsTrend } from "../components/FindingsTrend";
 
@@ -676,16 +676,39 @@ function SeverityDonut({ counts }: { counts: Record<string, number> }) {
   const total = Object.values(counts).reduce((s, v) => s + v, 0);
   const radius = 42;
   const circ = 2 * Math.PI * radius;
-  const colors: Record<string, string> = { CRITICAL: "#f85149", HIGH: "#3b82f6", MEDIUM: "#e3b341", LOW: "#3fb950" };
+  const colors: Record<string, string> = {
+    CRITICAL: "#EF4444",
+    HIGH: "#3B82F6",
+    MEDIUM: "#F59E0B",
+    LOW: "#22C55E",
+  };
 
   // Build arc data first so we can render hovered slice last (on top)
   let off = 0;
   const arcs = ["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(sev => {
-    const len = total ? (counts[sev] / total) * circ : 0;
-    const arc = { sev, len, off, color: colors[sev] };
+    const count = counts[sev] || 0;
+    const len = total ? (count / total) * circ : 0;
+    const pct = total ? Math.round((count / total) * 100) : 0;
+    // Calculate angle for percentage text inside the slice
+    const midAngle = total && count > 0 ? -90 + ((off + len / 2) / circ) * 360 : 0;
+    const rad = (midAngle * Math.PI) / 180;
+    const textX = 56 + radius * Math.cos(rad);
+    const textY = 56 + radius * Math.sin(rad);
+
+    const arc = {
+      sev,
+      count,
+      len,
+      off,
+      pct,
+      color: colors[sev],
+      textX,
+      textY,
+    };
     off += len;
     return arc;
   });
+
   const sorted = [
     ...arcs.filter(a => a.sev !== hovered),
     ...arcs.filter(a => a.sev === hovered),
@@ -694,55 +717,128 @@ function SeverityDonut({ counts }: { counts: Record<string, number> }) {
   return (
     <div className="donut-wrap">
       <div className="donut-chart">
-        <svg viewBox="0 0 112 112" role="img" aria-label={`Findings by severity, ${total} total`}
-          style={{ overflow: "visible" }}>
+        <svg
+          viewBox="0 0 112 112"
+          role="img"
+          aria-label={`Findings by severity, ${total} total`}
+          style={{ overflow: "visible", width: "100%", height: "100%" }}
+        >
           {/* Background track */}
-          <circle cx="56" cy="56" r={radius} fill="none" stroke="#e2e8f0" strokeWidth="14" />
-          {sorted.map(({ sev, len, off: arcOff, color }) => {
+          <circle cx="56" cy="56" r={radius} fill="none" stroke="#dbe7f5" strokeWidth="15" />
+          {sorted.map(({ sev, count, len, off: arcOff, color }) => {
             const isHov = hovered === sev;
             return (
               <circle
                 key={sev}
-                cx="56" cy="56" r={isHov ? 44 : radius}
+                cx="56"
+                cy="56"
+                r={isHov ? 43 : radius}
                 fill="none"
                 stroke={color}
-                strokeWidth={isHov ? 16 : 14}
-                strokeDasharray={`${isHov ? len * (44 / radius) : len} ${circ}`}
+                strokeWidth={isHov ? 17 : 15}
+                strokeDasharray={`${isHov ? len * (43 / radius) : len} ${circ}`}
                 strokeDashoffset={-arcOff}
                 transform="rotate(-90 56 56)"
-                style={{ cursor: "pointer", transition: "r 0.18s, stroke-width 0.18s", filter: isHov ? `drop-shadow(0 0 5px ${color}88)` : "none" }}
+                style={{
+                  cursor: "pointer",
+                  transition: "r 0.18s, stroke-width 0.18s",
+                  filter: isHov ? `drop-shadow(0 0 4px ${color}88)` : "none",
+                }}
                 onMouseEnter={() => setHovered(sev)}
                 onMouseLeave={() => setHovered(null)}
               >
-                <title>{sev}: {counts[sev].toLocaleString()} ({total ? Math.round((counts[sev] / total) * 100) : 0}%)</title>
+                <title>{sev}: {count.toLocaleString()} ({total ? Math.round((count / total) * 100) : 0}%)</title>
               </circle>
             );
           })}
-          {/* Center text — dark for white-bg panels */}
-          <text x="56" y="51" textAnchor="middle" fill={hovered ? colors[hovered] : "#64748b"}
-            fontSize="9" fontWeight="700" style={{ transition: "fill 0.2s" }}>
+
+          {/* Percentages inside donut slices */}
+          {arcs.map(({ sev, count, pct, textX, textY }) => {
+            if (!count || pct < 6) return null;
+            return (
+              <text
+                key={`pct-${sev}`}
+                x={textX}
+                y={textY + 2.5}
+                textAnchor="middle"
+                fill="#ffffff"
+                fontSize="6.5"
+                fontWeight="800"
+                style={{
+                  pointerEvents: "none",
+                  textShadow: "0 1px 2px rgba(0,0,0,0.45)",
+                }}
+              >
+                {pct}%
+              </text>
+            );
+          })}
+
+          {/* Center text — "TOTAL 8" */}
+          <text
+            x="56"
+            y="50"
+            textAnchor="middle"
+            fill={hovered ? colors[hovered] : "#475569"}
+            fontSize="8"
+            fontWeight="700"
+            letterSpacing="0.06em"
+            style={{ transition: "fill 0.2s" }}
+          >
             {hovered || "TOTAL"}
           </text>
-          <text x="56" y="65" textAnchor="middle" fill="#0f172a" fontSize="15" fontWeight="800">
+          <text
+            x="56"
+            y="67"
+            textAnchor="middle"
+            fill="#0f172a"
+            fontSize="18"
+            fontWeight="800"
+          >
             {(hovered ? counts[hovered] : total).toLocaleString()}
           </text>
           {hovered && (
-            <text x="56" y="75" textAnchor="middle" fill="#64748b" fontSize="8">
+            <text
+              x="56"
+              y="77"
+              textAnchor="middle"
+              fill="#64748b"
+              fontSize="6.5"
+              fontWeight="600"
+            >
               {total ? Math.round((counts[hovered] / total) * 100) : 0}% of total
             </text>
           )}
         </svg>
       </div>
+
       <div className="severity-legend">
-        {["CRITICAL", "HIGH", "MEDIUM", "LOW"].map(sev => (
-          <div key={sev}
-            onMouseEnter={() => setHovered(sev)}
+        {[
+          { key: "CRITICAL", label: "Critical", color: colors.CRITICAL },
+          { key: "HIGH", label: "High", color: colors.HIGH },
+          { key: "MEDIUM", label: "Medium", color: colors.MEDIUM },
+          { key: "LOW", label: "Low", color: colors.LOW },
+        ].map(({ key, label, color }) => (
+          <div
+            key={key}
+            onMouseEnter={() => setHovered(key)}
             onMouseLeave={() => setHovered(null)}
-            style={{ cursor: "pointer", opacity: hovered && hovered !== sev ? 0.45 : 1, transition: "opacity 0.15s" }}>
-            <span className={`legend-mark ${sev.toLowerCase()}`} />
-            <span>{sev}</span>
-            <strong>{counts[sev].toLocaleString()}</strong>
-            <small>{total ? `${Math.round((counts[sev] / total) * 100)}%` : "0%"}</small>
+            className={`severity-legend-row ${hovered === key ? "active" : ""}`}
+            style={{
+              cursor: "pointer",
+              opacity: hovered && hovered !== key ? 0.45 : 1,
+              transition: "opacity 0.15s, background-color 0.15s",
+            }}
+          >
+            <span
+              className="legend-bullet"
+              style={{ backgroundColor: color }}
+            />
+            <span className="legend-label">{label}</span>
+            <strong className="legend-count">{(counts[key] || 0).toLocaleString()}</strong>
+            <small className="legend-pct">
+              {total ? `${Math.round(((counts[key] || 0) / total) * 100)}%` : "0%"}
+            </small>
           </div>
         ))}
       </div>
@@ -787,40 +883,57 @@ function AnalyticsStatistics({ dashboard, assessment }: { dashboard: RecordValue
         </div>
       </section>
       <div className="analytics-grid">
-        <section className="panel"><h2>Findings by Severity</h2><SeverityDonut counts={counts} /></section>
-        <section className="panel">
+        <section className="panel panel-findings-severity">
+          <h2>Findings by Severity</h2>
+          <SeverityDonut counts={counts} />
+        </section>
+        <section className="panel panel-findings-trend">
           <h2>Findings Trend</h2>
           <p className="chart-note">Closure-speed signals by observed ticket date.</p>
           <FindingsTrend anomalies={dashboard.speed_anomalies} trend={dashboard.trend || dashboard.summary?.trend} />
         </section>
       </div>
       <div className="analytics-grid">
-        <section className="panel">
-          <h2>Analytics Signal Breakdown</h2>
-          <div className="signal-bars">
-            {signals.map(([label, value, tone]) => (
-              <div className="signal-bar" key={label}>
-                <div><span>{label}</span><strong>{Number(value).toLocaleString()}</strong></div>
-                <i className={tone} style={{ width: `${Math.min((Number(value) / Math.max(dashboard.summary.total_flagged_anomalies, 1)) * 100, 100)}%` }} />
-              </div>
-            ))}
+        <section className="panel panel-security-note">
+          <div className="section-heading">
+            <h2>Security Note</h2>
+            <ShieldCheck size={20} style={{ color: "#4f46e5" }} />
+          </div>
+          <p className="chart-note">Supervisory integrity and evidence provenance.</p>
+          <div className="security-note-card">
+            <p className="security-note-text">
+              All supervisory evaluations, anomaly detection models, and evidence verifications operate in an air-gapped local environment. Operational data is cryptographically tracked and tamper-evident.
+            </p>
+            <div className="security-signals-list">
+              {signals.map(([label, value, tone]) => (
+                <div className="security-signal-row" key={label}>
+                  <div className="security-signal-info">
+                    <span className={`signal-status-dot ${tone}`} />
+                    <span className="security-signal-label">{label}</span>
+                  </div>
+                  <strong>{Number(value).toLocaleString()}</strong>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
-        <section className="panel">
+        <section className="panel panel-top-assets">
           <h2>Top Assets by Deviation</h2>
           <p className="chart-note">Largest observed departures from peer volume.</p>
-          <table className="mini-table">
-            <thead><tr><th>Asset</th><th>Deviation</th><th>Status</th></tr></thead>
-            <tbody>
-              {assets.map((asset: RecordValue) => (
-                <tr key={asset.asset}>
-                  <td>{asset.asset}</td>
-                  <td>{asset.deviation > 0 ? "+" : ""}{asset.deviation}</td>
-                  <td><Tag value={asset.monitoring_status === "Observed" ? "Observed" : "Attention"} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="table-card">
+            <table className="mini-table">
+              <thead><tr><th>Asset</th><th>Deviation</th><th>Status</th></tr></thead>
+              <tbody>
+                {assets.map((asset: RecordValue) => (
+                  <tr key={asset.asset}>
+                    <td>{asset.asset}</td>
+                    <td>{asset.deviation > 0 ? "+" : ""}{asset.deviation}</td>
+                    <td><Tag value={asset.monitoring_status === "Observed" ? "Observed" : "Attention"} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       </div>
     </>

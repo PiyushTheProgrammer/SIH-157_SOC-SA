@@ -1,7 +1,0 @@
-﻿"use client";
-
-import { useEffect, useState } from "react";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "";
-type RecordValue = Record<string, any>;
-const nav = [["/", "Overview"], ["/assess
