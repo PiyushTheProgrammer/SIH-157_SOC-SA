@@ -12,17 +12,23 @@ The National Critical Information Infrastructure Protection Centre (NCIIPC) manu
 - **Database:** Local SQLite / PostgreSQL (via SQLAlchemy) for offline, immutable storage of alerts, entities, and audit reports.
 - **Analytics Engine:** Scikit-Learn (Isolation Forest) for anomaly detection and Ollama (Local Llama) for zero-network explainability.
 
-## 🚀 Setup & Installation Instructions
+## 🚀 One-Click Setup & Launch
 
-### Prerequisites
-- Node.js (v18+)
-- Python (3.10+)
-- Local Ollama installed (for AI Explainability)
+After cloning the repository, you only need to run **one command**:
 
-### 1. Backend Setup
-Navigate to the backend directory and set up the Python environment:
+### On Windows (Recommended):
+Double-click `run.bat` or run in terminal:
+```powershell
+.\run.bat
+```
+> **Note:** If this is your first time running, `run.bat` will automatically set up the Python virtual environment, install requirements, configure Node.js packages, create the PostgreSQL `sat_sa_db` database, and launch both services. On subsequent runs, it launches immediately.
+
+### On Linux / macOS / Manual Setup:
 ```bash
-cd backend
-python -m venv venv
-source venv/bin/activate  # On Windows use: venv\Scripts\activate
-pip install -r requirements.txt
+python setup.py     # Run automated setup
+python setup.py     # Or launch backend & frontend manually
+```
+
+- **Frontend Dashboard:** http://localhost:3000
+- **Backend Swagger API Docs:** http://127.0.0.1:8000/docs
+
